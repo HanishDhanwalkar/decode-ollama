@@ -18,6 +18,8 @@ _PROVIDER_ENV_VARS = (
     "MODAL_ENDPOINT_MODEL",
     "MODAL_PROXY_TOKEN_ID",
     "MODAL_PROXY_TOKEN_SECRET",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
 )
 
 # Context compaction vars (ADR-0006).
@@ -145,6 +147,8 @@ def test_scrub_covers_every_gated_secret(monkeypatch):
     s = Settings(_env_file=None)
     assert s.modal_proxy_token_id.get_secret_value() == ""
     assert s.modal_proxy_token_secret.get_secret_value() == ""
+    assert s.ollama_base_url == "http://localhost:11434"
+    assert s.ollama_model == ""
     assert s.sandbox_git_token is not None
     assert s.sandbox_git_token.get_secret_value() == ""
 
@@ -178,7 +182,7 @@ def test_provider_defaults(monkeypatch):
     assert s.modal_proxy_token_secret.get_secret_value() == ""
 
 
-@pytest.mark.parametrize("provider", ["gemini", "openrouter", "modal"])
+@pytest.mark.parametrize("provider", ["gemini", "openrouter", "modal", "ollama"])
 def test_llm_provider_accepts_each_valid_literal(monkeypatch, provider):
     monkeypatch.setenv("LLM_PROVIDER", provider)
     s = Settings(_env_file=None)
@@ -189,6 +193,19 @@ def test_llm_provider_rejects_unknown_value(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_ollama_settings_are_read_from_process_env(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.local:11434")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3:8b")
+
+    s = Settings(_env_file=None)
+
+    assert s.llm_provider == "ollama"
+    assert s.ollama_base_url == "http://ollama.local:11434"
+    assert s.ollama_model == "qwen3:8b"
+    assert s.active_model == "qwen3:8b"
 
 
 def test_reads_provider_vars_from_process_env(monkeypatch):

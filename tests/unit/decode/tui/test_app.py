@@ -468,6 +468,20 @@ def test_parse_mode_command(line, expected):
 
 
 @pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("/model", ""),
+        ("/model qwen2.5-coder:7b", "qwen2.5-coder:7b"),
+        ("  /model   gemini-2.5-flash  ", "gemini-2.5-flash"),
+        ("/modelx", None),
+        ("/mode plan", None),
+    ],
+)
+def test_parse_model_command(line, expected):
+    assert app.parse_model_command(line) == expected
+
+
+@pytest.mark.parametrize(
     ("name", "expected"),
     [
         ("default", PermissionMode.DEFAULT),
@@ -503,6 +517,27 @@ def test_agent_switch_confirmation_names_the_agent_and_mode():
 
     assert "plan" in line
     assert "Decode" in line
+
+
+def test_model_switch_confirmation_names_provider_and_model():
+    assert app.model_switch_confirmation("ollama", "qwen2.5-coder:7b") == (
+        "Decode - provider ollama | model: qwen2.5-coder:7b."
+    )
+
+
+def test_handler_switch_model_updates_override_compaction_window_and_gauge(mocker):
+    deps = _deps(PermissionGate())
+    handler = _handler(deps, mocker)
+    model = object()
+    handler._last_input_tokens = 123
+
+    handler.switch_model(model, model_id="qwen2.5-coder:7b", context_window_tokens=32768)
+
+    assert handler.model_id == "qwen2.5-coder:7b"
+    assert deps.model_override is model
+    assert deps.context_window_tokens == 32768
+    assert handler._compaction_model is model
+    assert handler.last_input_tokens == 0
 
 
 # the live bottom toolbar (reads agent + mode each render)
@@ -668,6 +703,91 @@ def test_handle_mode_command_missing_name_shows_usage():
 
     assert gate.mode is PermissionMode.DEFAULT
     assert any("/mode" in line for line in lines)
+
+
+@pytest.mark.parametrize("provider", ["gemini", "openrouter", "modal", "ollama"])
+async def test_handle_model_command_opens_picker_with_provider_qualified_models(mocker, provider):
+    mocker.patch.object(app.settings, "llm_provider", provider)
+    mocker.patch.object(
+        app.llm_providers,
+        "discover_provider_models",
+        return_value=["active-model", "other-model"],
+    )
+    handler = SimpleNamespace(model_id="active-model")
+    dialog = SimpleNamespace(run_async=mocker.AsyncMock(return_value="active-model"))
+    picker = mocker.patch.object(app, "radiolist_dialog", return_value=dialog)
+    lines: list[str] = []
+
+    await app._handle_model_command(
+        "", handler=handler, runner=SimpleNamespace(active_turns=0), emit=lines.append
+    )
+
+    choices = picker.call_args.kwargs["values"]
+    assert choices == [
+        ("active-model", f"provider {provider} | model: active-model (active)"),
+        ("other-model", f"provider {provider} | model: other-model"),
+    ]
+    assert picker.call_args.kwargs["default"] == "active-model"
+    assert lines == []
+
+
+async def test_handle_model_command_switches_to_the_picked_ollama_model(mocker):
+    mocker.patch.object(app.settings, "llm_provider", "ollama")
+    mocker.patch.object(app.settings, "ollama_model", "laya:latest")
+    mocker.patch.object(
+        app.llm_providers, "discover_provider_models", return_value=["qwen2.5-coder:7b"]
+    )
+    dialog = SimpleNamespace(run_async=mocker.AsyncMock(return_value="qwen2.5-coder:7b"))
+    mocker.patch.object(app, "radiolist_dialog", return_value=dialog)
+    built_model = object()
+    mocker.patch.object(app.llm_providers, "_build_model", return_value=built_model)
+    mocker.patch.object(app, "resolve_context_window", return_value=32768)
+    switch_model = mocker.Mock()
+    handler = SimpleNamespace(model_id="laya:latest", switch_model=switch_model)
+    lines: list[str] = []
+
+    await app._handle_model_command(
+        "", handler=handler, runner=SimpleNamespace(active_turns=0), emit=lines.append
+    )
+
+    assert app.settings.ollama_model == "qwen2.5-coder:7b"
+    switch_model.assert_called_once_with(
+        built_model, model_id="qwen2.5-coder:7b", context_window_tokens=32768
+    )
+    assert lines == ["Decode - provider ollama | model: qwen2.5-coder:7b."]
+
+
+async def test_handle_model_command_refuses_to_open_picker_during_a_turn(mocker):
+    mocker.patch.object(app.settings, "llm_provider", "gemini")
+    discover = mocker.patch.object(app.llm_providers, "_build_model")
+    handler = SimpleNamespace(model_id="gemini-3.8-flash")
+    lines: list[str] = []
+
+    await app._handle_model_command(
+        "", handler=handler, runner=SimpleNamespace(active_turns=1), emit=lines.append
+    )
+
+    discover.assert_not_called()
+    assert any("busy" in line for line in lines)
+
+
+async def test_handle_model_command_cancel_does_not_change_model(mocker):
+    mocker.patch.object(app.settings, "llm_provider", "gemini")
+    mocker.patch.object(
+        app.llm_providers, "discover_provider_models", return_value=["gemini-2.5-flash"]
+    )
+    dialog = SimpleNamespace(run_async=mocker.AsyncMock(return_value=None))
+    mocker.patch.object(app, "radiolist_dialog", return_value=dialog)
+    switch_model = mocker.Mock()
+    handler = SimpleNamespace(model_id="gemini-3.8-flash", switch_model=switch_model)
+    lines: list[str] = []
+
+    await app._handle_model_command(
+        "", handler=handler, runner=SimpleNamespace(active_turns=0), emit=lines.append
+    )
+
+    switch_model.assert_not_called()
+    assert lines == []
 
 
 def test_handle_agent_command_selects_the_agent_and_confirms():
@@ -1212,6 +1332,7 @@ def test_slash_completer_suggests_commands_and_skills(tmp_path):
     # A bare "/" lists everything, including a built-in command and a built-in skill.
     bare = _completions(completer, "/")
     assert "/compact" in bare and "/quit" in bare
+    assert "/model" in bare
     assert "/commit" in bare, "built-in skills appear in the menu too"
 
     # A prefix narrows to matching candidates only (and replaces the whole token).

@@ -43,6 +43,13 @@ GEMINI_API_KEY=your-key
 # or OpenRouter — free router across tool-capable models, key at https://openrouter.ai
 # LLM_PROVIDER=openrouter
 # OPENROUTER_API_KEY=sk-or-...
+
+# or Ollama — install/start Ollama and pull at least one model first:
+# ollama pull qwen3:8b
+# LLM_PROVIDER=ollama
+# OLLAMA_BASE_URL=http://localhost:11434
+# The interactive `decode` command defaults to a pulled model; use `/model` to list or switch.
+# For headless `decode run`, also set OLLAMA_MODEL=qwen3:8b (or pass --model).
 ```
 
 Both free tiers rate-limit (Gemini per minute, OpenRouter ~50 requests/day until you add $10). The course default is your own model on Modal: next tutorial.

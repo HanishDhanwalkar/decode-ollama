@@ -82,6 +82,7 @@ def _deps(
 @pytest.fixture
 def agent(mocker):
     """A real `decode` agent built with a dummy key (never used: tests override the model)."""
+    mocker.patch("decode.agent.factory.settings.llm_provider", "gemini", create=False)
     mocker.patch(
         "decode.agent.factory.settings.gemini_api_key", SecretStr("test-key"), create=False
     )
@@ -1020,6 +1021,19 @@ async def test_run_turn_captures_input_tokens_and_property_exposes_it(agent):
     # A non-zero capture, exposed through the public property (the gauge's clean read).
     assert handler.last_input_tokens > 0
     assert handler.last_input_tokens == handler._last_input_tokens
+
+
+async def test_run_turn_passes_the_live_model_override_to_agent_iter(agent, mocker):
+    deps = _deps(lambda _event: None)
+    handler = AgentTurnHandler(agent, deps=deps)
+    model_override = object()
+    handler.switch_model(model_override, model_id="test-model", context_window_tokens=4096)
+    run = _StubRun([_user_msg("prompt")], cumulative_input=0)
+    iter_call = mocker.patch.object(handler._agent, "iter", return_value=_StubIterCM(run))
+
+    await handler._run_turn(_ctx(0, "prompt", []), prompt="prompt")
+
+    assert iter_call.call_args.kwargs["model"] is model_override
 
 
 # task 126 (ADR-0018 §2): the gauge reads the LAST ModelResponse's per-request usage, not the

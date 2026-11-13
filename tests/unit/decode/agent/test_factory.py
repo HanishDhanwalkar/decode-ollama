@@ -35,9 +35,10 @@ from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-from decode.agent import factory
+from decode.agent import factory, llm_providers
 from decode.agent.deps import AgentDeps
-from decode.agent.factory import _build_model, build_agent
+from decode.agent.factory import build_agent
+from decode.agent.llm_providers import _build_model
 from decode.agents.loader import load_agent
 from decode.entities.agent_def import AgentDef
 from decode.entities.permissions import PermissionDecision, PermissionRequest
@@ -384,7 +385,7 @@ def test_build_agent_has_no_flow_mode_parameter():
 
 
 def test_build_model_has_no_flow_mode_parameter():
-    assert "flow_mode" not in inspect.signature(factory._build_model).parameters
+    assert "flow_mode" not in inspect.signature(_build_model).parameters
 
 
 def test_the_provider_key_comes_from_settings_for_gemini(mocker):
@@ -663,6 +664,14 @@ def _patch_provider(mocker, provider, *, modal_authenticated=True):
             create=False,
         )
         return OpenAIChatModel, "openai", "openai/gpt-oss-120b"
+    if provider == "ollama":
+        mocker.patch(
+            "decode.agent.llm_providers.settings.ollama_base_url",
+            "http://localhost:11434",
+            create=False,
+        )
+        mocker.patch("decode.agent.llm_providers.settings.ollama_model", "qwen3:8b", create=False)
+        return OpenAIChatModel, "openai", "qwen3:8b"
     raise AssertionError(f"unhandled provider in test helper: {provider}")
 
 
@@ -673,8 +682,9 @@ def _patch_provider(mocker, provider, *, modal_authenticated=True):
         ("openrouter", False),
         ("modal", True),
         ("modal", False),
+        ("ollama", False),
     ],
-    ids=["gemini", "openrouter", "modal-authenticated", "modal-unauthenticated"],
+    ids=["gemini", "openrouter", "modal-authenticated", "modal-unauthenticated", "ollama"],
 )
 def test_build_agent_constructs_the_model_for_the_configured_provider(
     mocker, provider, modal_authenticated
@@ -717,6 +727,28 @@ def test_modal_unauthenticated_client_has_no_modal_headers_and_placeholder_api_k
     assert client.api_key == "EMPTY"
 
 
+def test_ollama_client_uses_the_local_openai_compatible_endpoint(mocker):
+    _patch_provider(mocker, "ollama")
+
+    model = _build_model()
+
+    assert str(model.provider.client.base_url) == "http://localhost:11434/v1/"
+    assert model.provider.client.api_key == "ollama"
+
+
+def test_discover_ollama_models_reads_names_from_tags_endpoint(mocker):
+    response = mocker.Mock()
+    response.json.return_value = {
+        "models": [{"name": "qwen3:8b"}, {"name": "llama3.2:latest"}, {"digest": "ignored"}]
+    }
+    get = mocker.patch.object(llm_providers.httpx, "get", return_value=response)
+    mocker.patch.object(llm_providers.settings, "ollama_base_url", "http://ollama.local/")
+
+    assert llm_providers.discover_ollama_models() == ["qwen3:8b", "llama3.2:latest"]
+    get.assert_called_once_with("http://ollama.local/api/tags", timeout=5.0)
+    response.raise_for_status.assert_called_once_with()
+
+
 async def test_modal_tool_definitions_never_carry_the_strict_flag_on_the_wire(tmp_path, mocker):
     """No ``"strict": true`` on any tool a Modal endpoint receives (regression guard).
 
@@ -750,13 +782,13 @@ async def test_modal_tool_definitions_never_carry_the_strict_flag_on_the_wire(tm
             },
         )
 
-    real_client_cls = factory.AsyncOpenAI
+    real_client_cls = llm_providers.AsyncOpenAI
 
     def offline_client(**kwargs):
         kwargs["http_client"] = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         return real_client_cls(**kwargs)
 
-    mocker.patch.object(factory, "AsyncOpenAI", offline_client)
+    mocker.patch.object(llm_providers, "AsyncOpenAI", offline_client)
 
     agent = build_agent()
     result = await agent.run("hi", deps=_deps(tmp_path))
@@ -794,8 +826,15 @@ _PROVIDER_CASES = [
     ("openrouter", False),
     ("modal", True),
     ("modal", False),
+    ("ollama", False),
 ]
-_PROVIDER_CASE_IDS = ["gemini", "openrouter", "modal-authenticated", "modal-unauthenticated"]
+_PROVIDER_CASE_IDS = [
+    "gemini",
+    "openrouter",
+    "modal-authenticated",
+    "modal-unauthenticated",
+    "ollama",
+]
 
 
 @pytest.mark.parametrize(

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     # Typing-only import: a runtime import would form a cycle (agents loader → decode.tools →
     # this module); the __future__ annotations keep the field annotation a string.
     from decode.entities.agent_def import AgentDef
+    from pydantic_ai.models import Model
 
 
 def _default_active_agent() -> AgentDef:
@@ -94,6 +95,8 @@ class AgentDeps:
     # in ``__post_init__``: that would fire a provider probe on every ``AgentDeps()`` ever built,
     # tests included. The entrypoints that know the run's model resolve it and pass it in.
     context_window_tokens: int | None = None
+    # Optional live model override shared with Explore children after a ``/model`` switch.
+    model_override: Model | None = None
 
     def __post_init__(self) -> None:
         """Default ``harness_home`` to ``cwd`` when unset — the back-compat equal-roots case (§6)."""

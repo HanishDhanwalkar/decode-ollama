@@ -25,11 +25,13 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.shortcuts import radiolist_dialog
 from pydantic_ai.messages import ModelMessage
 from rich.console import Console
 from rich.text import Text
 
 from decode import observability
+from decode.agent import llm_providers
 from decode.agent.context_window import resolve_context_window
 from decode.agent.deps import AgentDeps, PermissionResolver, UserQuestionResolver
 from decode.agent.factory import build_agent
@@ -73,6 +75,7 @@ _QUIT_COMMAND = "/quit"
 # Mid-session control slash commands (ADR-0003 §9), parsed on the single input surface.
 _AGENT_COMMAND = "/agent"
 _MODE_COMMAND = "/mode"
+_MODEL_COMMAND = "/model"
 # Reserved slash commands (matched before ``parse_skill_command`` so a same-named project skill
 # can never shadow them), all idle-only: manual full compaction (ADR-0006 §7), conversation wipe
 # (summarize-to-memory then clear), and the git hand-back (ADR-0012 §8).
@@ -143,7 +146,7 @@ def footer_hint(agent: str, mode: str, *, verbose: bool) -> str:
     return (
         f"agent:{agent} mode:{mode} verbose:{'on' if verbose else 'off'} | Enter steer | "
         "Alt+Enter follow-up | Esc abort | Shift+Tab mode | Ctrl+O verbose | "
-        "/agent /mode /compact /clear /ship /quit"
+        "/agent /mode /model /compact /clear /ship /quit"
     )
 
 
@@ -170,6 +173,11 @@ def parse_agent_command(line: str) -> str | None:
 def parse_mode_command(line: str) -> str | None:
     """Return the mode argument of a ``/mode <name>`` line, or ``None`` if not that command."""
     return _parse_slash_arg(line, _MODE_COMMAND)
+
+
+def parse_model_command(line: str) -> str | None:
+    """Return the argument of ``/model`` (normally empty), or ``None`` for other input."""
+    return _parse_slash_arg(line, _MODEL_COMMAND)
 
 
 def _parse_slash_arg(line: str, command: str) -> str | None:
@@ -211,6 +219,7 @@ class SlashCompleter(Completer):
         self._meta = {
             _AGENT_COMMAND: "switch the active agent (/agent <name>)",
             _MODE_COMMAND: "switch the permission mode (/mode <name>)",
+            _MODEL_COMMAND: "choose a model with the arrow keys",
             _COMPACT_COMMAND: "compact the conversation now",
             _CLEAR_COMMAND: "clear the conversation (summarizes to memory first)",
             _SHIP_COMMAND: "ship the sandbox workspace back as a git branch",
@@ -265,9 +274,15 @@ def agent_switch_confirmation(name: str, mode: str) -> str:
     return f"Decode - agent: {name} (mode: {mode})."
 
 
+def model_switch_confirmation(provider: str, model: str) -> str:
+    """The one-line confirmation after a provider model switch."""
+    return f"Decode - provider {provider} | model: {model}."
+
+
 # The inline usage lines shown when ``/agent`` / ``/mode`` are typed with no argument.
 _AGENT_USAGE = "Decode - usage: /agent <name> (build / plan / code-reviewer)."
 _MODE_USAGE = "Decode - usage: /mode <name> (default / plan / edit / bypass)."
+_MODEL_USAGE = "Decode - usage: /model (choose a model with the arrow keys)."
 
 
 def _handle_agent_command(
@@ -314,6 +329,71 @@ def _handle_mode_command(
     gate.set_mode(mode)
     logger.debug("/mode switched to %s", mode.value)
     emit(mode_switch_confirmation(mode.value))
+
+
+async def _handle_model_command(
+    argument: str,
+    *,
+    handler: AgentTurnHandler,
+    runner: Runner,
+    emit: Callable[[str], None],
+) -> None:
+    """Open an arrow-key picker for available models and switch the idle session."""
+    provider = settings.llm_provider
+    if argument:
+        emit(_MODEL_USAGE)
+        return
+    if runner.active_turns:
+        emit("Decode - busy; try /model again once the turn finishes.")
+        return
+
+    try:
+        models = llm_providers.discover_provider_models()
+    except Exception:
+        logger.debug("model discovery failed for provider %s", provider, exc_info=True)
+        emit(f"Decode - could not list models for provider {provider}.")
+        return
+    if not models:
+        emit(f"Decode - no models found for provider {provider}.")
+        return
+    if handler.model_id not in models:
+        models.insert(0, handler.model_id)
+
+    selection = await radiolist_dialog(
+        title="Select model",
+        text=f"Choose a model for provider {provider}:",
+        values=[
+            (
+                available,
+                f"provider {provider} | model: {available}"
+                + (" (active)" if available == handler.model_id else ""),
+            )
+            for available in models
+        ],
+        default=handler.model_id,
+    ).run_async()
+    if selection is None or selection == handler.model_id:
+        return
+
+    try:
+        model = llm_providers._build_model(model=selection)
+        window = resolve_context_window(selection)
+    except Exception:
+        logger.debug(
+            "model switch to %s failed for provider %s", selection, provider, exc_info=True
+        )
+        emit(f"Decode - could not switch to model {selection!r} for provider {provider}.")
+        return
+
+    handler.switch_model(model, model_id=selection, context_window_tokens=window)
+    model_setting = {
+        "gemini": "gemini_model",
+        "openrouter": "openrouter_model",
+        "modal": "modal_endpoint_model",
+        "ollama": "ollama_model",
+    }[provider]
+    setattr(settings, model_setting, selection)
+    emit(model_switch_confirmation(provider, selection))
 
 
 # Inline lines for ``/compact`` (the COMPACTED path renders nothing — the ContextCompacted event
@@ -923,11 +1003,12 @@ async def run_app(
     if recording_notice is not None:
         emit_line(f"Decode - {recording_notice}")
 
-    # The active model id per provider (same mapping as factory._build_model's branches).
+    # The active model id per provider (same mapping as llm_providers._build_model's branches).
     active_model = {
         "gemini": settings.gemini_model,
         "openrouter": settings.openrouter_model,
         "modal": settings.modal_endpoint_model,
+        "ollama": settings.ollama_model,
     }[settings.llm_provider]
     console.print(
         render.render_event(
@@ -970,6 +1051,13 @@ async def run_app(
             mode_arg = parse_mode_command(text)
             if mode_arg is not None:
                 _handle_mode_command(mode_arg, gate=gate, emit=emit_line)
+                continue
+
+            model_arg = parse_model_command(text)
+            if model_arg is not None:
+                await _handle_model_command(
+                    model_arg, handler=handler, runner=runner, emit=emit_line
+                )
                 continue
 
             # Reserved before the skill branch so a ``compact`` skill can never shadow it.

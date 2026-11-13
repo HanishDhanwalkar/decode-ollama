@@ -163,7 +163,7 @@ def _probe(provider: str, model_id: str, cfg: Settings) -> int | None:
 def _probe_openai_compatible(model_id: str, cfg: Settings) -> int | None:
     """``GET {modal_endpoint_url}/v1/models`` → ``data[].max_model_len`` (vLLM behind Modal).
 
-    Auth mirrors :func:`decode.agent.factory._build_model`: the dual ``Modal-Key`` / ``Modal-Secret``
+    Auth mirrors :func:`decode.agent.llm_providers._build_model`: the dual ``Modal-Key`` / ``Modal-Secret``
     proxy-token headers when BOTH are set, no headers at all for an ``--unauthenticated`` endpoint.
     """
     base_url = cfg.modal_endpoint_url

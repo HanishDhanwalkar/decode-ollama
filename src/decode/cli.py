@@ -16,9 +16,12 @@ import os  # noqa: E402
 import subprocess  # noqa: E402
 from pathlib import Path  # noqa: E402
 
+os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
+
 import click  # noqa: E402
 from pydantic_ai.exceptions import UsageLimitExceeded  # noqa: E402
 
+from decode.agent import llm_providers  # noqa: E402
 from decode.agent.context_window import resolve_context_window_detail  # noqa: E402
 from decode.agents.loader import load_primary_agent  # noqa: E402
 from decode.config.settings import settings  # noqa: E402
@@ -45,6 +48,11 @@ _OPENROUTER_NO_KEY_MESSAGE = (
 _MODAL_PROXY_TOKENS_MESSAGE = (
     "Decode: LLM_PROVIDER=modal proxy tokens are both-or-neither — set both MODAL_PROXY_TOKEN_ID "
     "and MODAL_PROXY_TOKEN_SECRET, or neither for an --unauthenticated endpoint (see .env.example)."
+)
+
+_OLLAMA_MODEL_REQUIRED_MESSAGE = (
+    "Decode: set OLLAMA_MODEL for headless runs with LLM_PROVIDER=ollama; "
+    "the interactive REPL can choose from locally pulled models (see .env.example)."
 )
 
 # Docker daemon reachability guard — presence only; fires in both the REPL and the headless
@@ -89,11 +97,14 @@ _MAX_REQUESTS_MESSAGE = (
 )
 
 
-def _provider_config_error() -> str | None:
+def _provider_config_error(
+    *, model_override: str | None = None, allow_ollama_selection: bool = False
+) -> str | None:
     """One friendly line if the selected provider's required config is missing, else None (ADR-0005 §6).
 
     Presence / both-or-neither shape only — never correctness (a wrong key fails at the first model
     request). ``modal`` needs only url + model; its proxy tokens are optional but both-or-neither.
+    ``ollama`` needs a model in headless mode; the interactive REPL resolves one from the local list.
     """
     provider = settings.llm_provider
     if provider == "gemini":
@@ -123,7 +134,40 @@ def _provider_config_error() -> str | None:
         if bool(token_id) != bool(token_secret):
             return _MODAL_PROXY_TOKENS_MESSAGE
         return None
+    if provider == "ollama" and not (model_override or settings.ollama_model):
+        return None if allow_ollama_selection else _OLLAMA_MODEL_REQUIRED_MESSAGE
     return None  # defensive: the settings ``Literal`` blocks any other value upstream.
+
+
+def _initialize_ollama_model() -> None:
+    """Use the configured pulled model or default to the first model Ollama reports."""
+    try:
+        models = llm_providers.discover_ollama_models()
+    except Exception as exc:
+        logger.debug("Ollama model discovery failed", exc_info=True)
+        click.echo(
+            f"Decode: could not reach Ollama at {settings.ollama_base_url}; "
+            "start Ollama and retry.",
+            err=True,
+        )
+        raise click.exceptions.Exit(1) from exc
+
+    if not models:
+        click.echo(
+            f"Decode: no Ollama models found at {settings.ollama_base_url}; "
+            "pull one with `ollama pull <model>` and retry.",
+            err=True,
+        )
+        raise click.exceptions.Exit(1)
+    if settings.ollama_model and settings.ollama_model not in models:
+        click.echo(
+            f"Decode: OLLAMA_MODEL={settings.ollama_model!r} is not pulled; "
+            "pull it or remove OLLAMA_MODEL to use the first available model.",
+            err=True,
+        )
+        raise click.exceptions.Exit(1)
+    if not settings.ollama_model:
+        settings.ollama_model = models[0]
 
 
 def _context_window_notice(model: str | None = None) -> str | None:
@@ -227,7 +271,9 @@ def _sandbox_repo_config_error(repo: str | None) -> str | None:
     return None
 
 
-def _runtime_config_preflight(repo: str | None = None) -> str | None:
+def _runtime_config_preflight(
+    repo: str | None = None, *, model_override: str | None = None
+) -> str | None:
     """The headless guard chain for ``decode run``; the FIRST friendly error line, or None.
 
     Order is load-bearing:
@@ -238,7 +284,7 @@ def _runtime_config_preflight(repo: str | None = None) -> str | None:
     3. Sandbox backend guard, then the sandbox-repo guard. ``repo`` is the ``--repo`` flag, resolved
        against ``SANDBOX_REPO`` inside.
     """
-    config_error = _provider_config_error()
+    config_error = _provider_config_error(model_override=model_override)
     if config_error is not None:
         logger.debug("provider %s misconfigured; refusing to run", settings.llm_provider)
         return config_error
@@ -326,11 +372,14 @@ def cli(
     logger.debug("decode starting (resume=%s, agent=%s, mode=%s)", resume, agent, mode)
     # Provider config startup guard (ADR-0005 §6): one friendly stderr line before any agent is
     # built, instead of the raw pydantic_ai.UserError build_agent() would raise.
-    config_error = _provider_config_error()
+    config_error = _provider_config_error(allow_ollama_selection=True)
     if config_error is not None:
         logger.debug("provider %s misconfigured; refusing to start", settings.llm_provider)
         click.echo(config_error, err=True)
         raise click.exceptions.Exit(1)
+
+    if settings.llm_provider == "ollama":
+        _initialize_ollama_model()
 
     # Context-window notice: NOT a guard — it warns and continues. The window is derived from the
     # active model when unset; an unrecognised model gets a conservative assumption the operator
@@ -492,7 +541,7 @@ def run(
         raise click.exceptions.Exit(1) from exc
 
     # The headless guard chain; any failure exits non-zero here, before any agent is built.
-    config_error = _runtime_config_preflight(repo=repo)
+    config_error = _runtime_config_preflight(repo=repo, model_override=model)
     if config_error is not None:
         click.echo(config_error, err=True)
         raise click.exceptions.Exit(1)

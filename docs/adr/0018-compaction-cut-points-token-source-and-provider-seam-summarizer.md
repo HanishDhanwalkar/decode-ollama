@@ -63,7 +63,7 @@ One feature, five coordinated decisions:
    `context/compaction.py` drops its `Settings → GoogleModel` branch; `summarize_for_compaction`
    accepts a built `pydantic_ai.models.Model`, and the ONE wiring site (`tui/app.py` — verified:
    `runtime/flow.py` wires no `AgentTurnHandler`, hence no headless cascade exists to rewire)
-   hands it the ACTIVE provider's built model (`factory._build_model` output or the built agent's
+  hands it the ACTIVE provider's built model (`llm_providers._build_model` output or the built agent's
    own model — same seam either way; import direction stays `tui → {agent, context}`). The
    Model-instance path remains the tests' no-network seam. **No cross-provider summarizer
    override knob** — a real second need would justify one. What would justify revisiting: a
@@ -90,7 +90,7 @@ flowchart TB
     trig -->|"below / 0 tokens"| noop["no-op"]
 
     split --> summ["summarize_for_compaction(model)<br/>model = ACTIVE provider via Provider Seam<br/>gemini · openrouter · modal (GoogleModel hardcode DELETED)"]
-    seam["agent/factory._build_model()"] -->|"built Model, wired in tui/app"| summ
+    seam["agent/llm_providers._build_model()"] -->|"built Model, wired in tui/app"| summ
     summ --> outcome{"CompactOutcome"}
     outcome -->|"COMPACTED"| apply["history = [summary, *tail] · JSONL compaction line<br/>gauge := chars≈/4 estimate of kept history<br/>(understates only; next leg overwrites)"]
     outcome -->|"NOTHING_TO_COMPACT"| l1["/compact: 'nothing to compact yet'"]

@@ -487,6 +487,40 @@ def test_provider_config_error_openrouter_present_returns_none(mocker):
     assert cli_mod._provider_config_error() is None
 
 
+def test_provider_config_error_ollama_requires_a_model_for_headless_runs(mocker):
+    _select_provider(mocker, "ollama", ollama_model="")
+
+    assert cli_mod._provider_config_error() == cli_mod._OLLAMA_MODEL_REQUIRED_MESSAGE
+    assert cli_mod._provider_config_error(model_override="llama3.2") is None
+    assert cli_mod._provider_config_error(allow_ollama_selection=True) is None
+
+
+def test_ollama_initialization_defaults_to_the_first_pulled_model(mocker):
+    _select_provider(mocker, "ollama", ollama_model="")
+    mocker.patch.object(
+        cli_mod.llm_providers, "discover_ollama_models", return_value=["qwen3:8b", "llama3.2"]
+    )
+
+    cli_mod._initialize_ollama_model()
+
+    assert cli_mod.settings.ollama_model == "qwen3:8b"
+
+
+def test_ollama_initialization_keeps_a_configured_pulled_model(mocker):
+    _select_provider(mocker, "ollama", ollama_model="llama3.2")
+    mocker.patch.object(
+        cli_mod.llm_providers, "discover_ollama_models", return_value=["qwen3:8b", "llama3.2"]
+    )
+
+    cli_mod._initialize_ollama_model()
+
+    assert cli_mod.settings.ollama_model == "llama3.2"
+
+
+def test_cli_disables_the_pydantic_ai_banner():
+    assert os.environ["PYDANTIC_AI_NO_BANNER"] == "1"
+
+
 def test_provider_config_error_modal_missing_url_names_only_url(mocker):
     # model present, url absent → name only the absent var.
     _select_provider(mocker, "modal", modal_endpoint_url="", modal_endpoint_model="m")

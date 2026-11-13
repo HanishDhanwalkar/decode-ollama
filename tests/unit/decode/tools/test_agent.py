@@ -211,6 +211,7 @@ def agent(mocker):
     ``build_agent`` also installs it as the subagent-spawn seam (``set_main_agent``), so the nested
     child ``agent.run()`` re-enters THIS object under the same ``override(model=…)`` context.
     """
+    mocker.patch("decode.agent.factory.settings.llm_provider", "gemini", create=False)
     mocker.patch(
         "decode.agent.factory.settings.gemini_api_key", SecretStr("test-key"), create=False
     )
@@ -394,6 +395,8 @@ async def test_spawn_builds_fresh_narrowed_read_only_child_deps(agent, tmp_path)
 
     emitted: list[events.Event] = []
     parent_deps = _loop_deps(emitted.append, gate=PermissionGate(), cwd=tmp_path)
+    model_override = _child_model("CHILD-REPORT")
+    parent_deps.model_override = model_override
     handler = AgentTurnHandler(agent, deps=parent_deps)
     ctx = TurnContext(0, "explore the repo", emitted.append)
     with agent.override(model=_fanout_model(_child_globs_then_reports("CHILD-REPORT"))):
@@ -422,6 +425,7 @@ async def test_spawn_builds_fresh_narrowed_read_only_child_deps(agent, tmp_path)
     assert child_deps.active_agent.subagent is True
     assert child_deps.cwd == parent_deps.cwd
     assert child_deps.harness_home == parent_deps.harness_home
+    assert kwargs["model"] is model_override
     # Bounded by the request cap, and WITHOUT threading the parent usage (ADR-0013 §7,10).
     assert kwargs["usage_limits"].request_limit == settings.subagent_max_requests
     assert "usage" not in kwargs

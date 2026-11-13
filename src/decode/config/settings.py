@@ -93,9 +93,9 @@ class Settings(BaseSettings):
     # ``MEMORY.md``. A new environment is a code change, deliberately.
     decode_env: DecodeEnv = "local"
 
-    # --- Inference: one of three providers behind LLM_PROVIDER (ADR-0005). ---
+    # --- Inference: the selected provider behind LLM_PROVIDER (ADR-0005). ---
     # Explicit selector (no auto-detect); the ``gemini`` default keeps existing .env files working.
-    llm_provider: Literal["gemini", "openrouter", "modal"] = "gemini"
+    llm_provider: Literal["gemini", "openrouter", "modal", "ollama"] = "ollama"
 
     # gemini (default): google-genai API-key path.
     gemini_api_key: SecretStr = SecretStr("")
@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     modal_endpoint_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
     modal_proxy_token_id: SecretStr = SecretStr("")  # Modal-Key: wk-... request header
     modal_proxy_token_secret: SecretStr = SecretStr("")  # Modal-Secret: ws-... request header
+
+    # ollama: local Ollama server's OpenAI-compatible API. The REPL discovers pulled models;
+    # headless runs set OLLAMA_MODEL explicitly.
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = ""
 
     # --- Logging ---
     log_level: str = "INFO"
@@ -316,6 +321,8 @@ class Settings(BaseSettings):
             return self.openrouter_model
         if self.llm_provider == "modal":
             return self.modal_endpoint_model
+        if self.llm_provider == "ollama":
+            return self.ollama_model
         return self.gemini_model
 
     @property

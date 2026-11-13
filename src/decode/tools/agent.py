@@ -484,6 +484,7 @@ async def _run_attempt(ctx: RunContext[AgentDeps], prompt: str, *, index: int) -
         # Inherited, never re-resolved: the child reuses the parent's Agent and therefore its model
         # (ADR-0013 §6), so its window is the parent's — and re-resolving would risk a second probe.
         context_window_tokens=ctx.deps.context_window_tokens,
+        model_override=ctx.deps.model_override,
         # ``task_store`` omitted: the default_factory gives each child a fresh empty list.
     )
 
@@ -492,6 +493,7 @@ async def _run_attempt(ctx: RunContext[AgentDeps], prompt: str, *, index: int) -
         result = await _require_main_agent().run(
             prompt,
             deps=child_deps,
+            model=child_deps.model_override,
             usage_limits=UsageLimits(request_limit=settings.subagent_max_requests),
             # The child's live tool-call feed (a nested ``run()`` bypasses decode's loop, so this is
             # the only place its calls exist). It lands in ``child_emit``, which decides — at emit

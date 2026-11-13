@@ -119,6 +119,7 @@ class AgentTurnHandler:
         # Compaction summarizer: the ACTIVE provider's built model (ADR-0006 §4, ADR-0018 §5);
         # ``None`` disables the cascade.
         self._compaction_model = compaction_model
+        self._model_id: str | None = None
         # Input-token occupancy driving the compaction trigger + TUI gauge: the most recent leg's
         # provider-reported number, or — the instant a compaction lands — the chars≈/4 estimate of
         # the kept history, which the next leg's provider number overwrites (ADR-0018 §2, §4).
@@ -141,6 +142,19 @@ class AgentTurnHandler:
         no response reported usage).
         """
         return self._last_input_tokens
+
+    @property
+    def model_id(self) -> str:
+        """The model id currently used by this session."""
+        return self._model_id or settings.active_model
+
+    def switch_model(self, model: Model, *, model_id: str, context_window_tokens: int) -> None:
+        """Apply a model switch to future parent and child requests and compaction."""
+        self._deps.model_override = model
+        self._compaction_model = model
+        self._deps.context_window_tokens = context_window_tokens
+        self._model_id = model_id
+        self._last_input_tokens = 0
 
     async def __call__(self, ctx: TurnContext) -> AsyncGenerator[Boundary, list[str]]:
         """Run one harness turn as a sequence of legs (ADR-0002 §3-4).
@@ -411,6 +425,7 @@ class AgentTurnHandler:
             deps=self._deps,
             message_history=self.message_history,
             deferred_tool_results=deferred_results,
+            model=self._deps.model_override,
         ) as run:
             try:
                 async for node in run:

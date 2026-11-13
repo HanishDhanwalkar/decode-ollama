@@ -1,30 +1,19 @@
 """Build the ``decode`` Pydantic AI agent on the configured **LLM Provider**.
 
-The factory owns the Provider Seam: :func:`_build_model` branches on ``settings.llm_provider``
-(``gemini`` / ``openrouter`` / ``modal``); everything else in :func:`build_agent` is
-provider-agnostic, and the loop owns all runtime behaviour. Tools come from the flat
-:mod:`decode.tools.registry` (the single source of truth); ``output_type=[str,
-DeferredToolRequests]`` wires the permission gate's deferred-tool seam.
-See ADR-0002 §1-2 and ADR-0005 (provider construction facts live on :func:`_build_model`).
+The provider seam lives in :mod:`decode.agent.llm_providers`; everything else in
+:func:`build_agent` is provider-agnostic, and the loop owns all runtime behaviour. Tools come from
+the flat :mod:`decode.tools.registry` (the single source of truth); ``output_type=[str,
+DeferredToolRequests]`` wires the permission gate's deferred-tool seam. See ADR-0002 §1-2 and ADR-0005.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Literal
 
-from openai import AsyncOpenAI
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.agent import AgentRetries
-from pydantic_ai.models import Model
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.profiles import ModelProfile, merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile
-from pydantic_ai.providers.google import GoogleProvider
-from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.providers.openrouter import OpenRouterProvider
 
+from decode.agent import llm_providers
 from decode.agent.deps import AgentDeps
 from decode.config.settings import settings
 from decode.memory.service import assemble_memory
@@ -50,7 +39,7 @@ def build_agent(*, model: str | None = None) -> Agent[AgentDeps, str | DeferredT
     key always comes from ``Settings`` (ADR-0015 §4). ``model`` is the Model Override: it overrides
     only the active provider's model id, never the provider.
     """
-    built_model = _build_model(model=model)
+    built_model = llm_providers._build_model(model=model)
     agent: Agent[AgentDeps, str | DeferredToolRequests] = Agent(
         built_model,
         deps_type=AgentDeps,
@@ -71,77 +60,6 @@ def build_agent(*, model: str | None = None) -> Agent[AgentDeps, str | DeferredT
     set_main_agent(agent)
     logger.debug("built agent on llm_provider=%s", settings.llm_provider)
     return agent
-
-
-def _build_model(*, model: str | None = None) -> Model:
-    """Build the Pydantic AI model for ``settings.llm_provider`` — the Provider Seam (ADR-0005 §3-5).
-
-    ``model`` is the optional Model Override: ``model or settings.<provider>_model`` per branch —
-    never the provider branch or the auth/key path; no cross-provider swap. Branch facts verified
-    against the installed SDKs: ``gemini`` uses the Generative-Language API-key path and never passes
-    ``vertexai=`` (its deprecation warning would fail under ``filterwarnings=["error"]``);
-    ``openrouter`` / ``modal`` both ride ``OpenAIChatModel``, modal over a bespoke ``AsyncOpenAI``
-    client for its per-user ``base_url`` + dual-header proxy-token auth (both-or-neither enforced
-    upstream by the cli guard). ``gemini`` / ``openrouter`` source their key from ``Settings`` through
-    :func:`_provider_api_key` (ADR-0015 §4); modal is deliberately not on it (a header surface, not a
-    single api_key). The trailing :class:`ValueError` is defensive — the settings ``Literal`` blocks
-    it upstream.
-    """
-    provider = settings.llm_provider
-    if provider == "gemini":
-        return GoogleModel(
-            model or settings.gemini_model,
-            provider=GoogleProvider(api_key=_provider_api_key("gemini")),
-        )
-    if provider == "openrouter":
-        return OpenAIChatModel(
-            model or settings.openrouter_model,
-            provider=OpenRouterProvider(api_key=_provider_api_key("openrouter")),
-        )
-    if provider == "modal":
-        base_url = f"{settings.modal_endpoint_url}/v1"
-        token_id = settings.modal_proxy_token_id.get_secret_value()
-        token_secret = settings.modal_proxy_token_secret.get_secret_value()
-        if token_id and token_secret:
-            # Authenticated endpoint: dual Modal-Key / Modal-Secret proxy headers (not Bearer).
-            client = AsyncOpenAI(
-                base_url=base_url,
-                api_key=token_secret,  # non-empty; the OpenAI client requires it
-                default_headers={"Modal-Key": token_id, "Modal-Secret": token_secret},
-            )
-        else:
-            # --unauthenticated endpoint: no Modal headers; placeholder api_key (SDK needs non-empty).
-            client = AsyncOpenAI(base_url=base_url, api_key="EMPTY")
-        return OpenAIChatModel(
-            model or settings.modal_endpoint_model,
-            provider=OpenAIProvider(openai_client=client),
-            profile=_modal_profile,
-        )
-    raise ValueError(f"unsupported llm_provider: {provider!r}")
-
-
-def _modal_profile(inferred: ModelProfile) -> ModelProfile:
-    """Never send ``"strict": true`` on a tool definition to a Modal endpoint.
-
-    ``strict`` is OpenAI-cloud constrained decoding; pydantic-ai flags every strict-compatible
-    tool with it whenever the profile allows. The open-weights servers behind a Modal endpoint do
-    not implement it, and SGLang's gpt-oss (Harmony) tool-call parser silently DROPS the call when
-    the flag is present: the model stops on ``<|call|>`` but the reply carries no ``tool_calls``
-    and empty content, so the agent sees "nothing" and the run dies on output retries (every
-    benchmark trial of gpt-oss-120b scored 0). Layered on top of whatever profile the provider
-    inferred from the model id, so Qwen / other families keep their own settings.
-    """
-    return merge_profile(inferred, OpenAIModelProfile(openai_supports_strict_tool_definition=False))
-
-
-def _provider_api_key(provider: Literal["gemini", "openrouter"]) -> str:
-    """Read the provider API key from ``Settings`` — the single source of truth (ADR-0021).
-
-    Whichever store feeds the chain (``.env`` on a laptop, a Modal Secret in a container) hydrates
-    the ``SecretStr``; the key never comes from anywhere else, headless or interactively.
-    """
-    secret = settings.gemini_api_key if provider == "gemini" else settings.openrouter_api_key
-    return secret.get_secret_value()
 
 
 def _register_instructions(agent: Agent[AgentDeps, str | DeferredToolRequests]) -> None:

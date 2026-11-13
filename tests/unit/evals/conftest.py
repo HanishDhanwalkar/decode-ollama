@@ -31,7 +31,7 @@ def install_model(mocker) -> Callable[[FunctionModel], None]:
     """
 
     def _install(model: FunctionModel) -> None:
-        mocker.patch("decode.agent.factory._build_model", return_value=model)
+        mocker.patch("decode.agent.llm_providers._build_model", return_value=model)
 
     return _install
 
