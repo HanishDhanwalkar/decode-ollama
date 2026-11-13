@@ -8,13 +8,13 @@ import httpx
 from openai import AsyncOpenAI
 from pydantic_ai.models import Model
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.ollama import OllamaModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.google import GoogleProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.ollama import OllamaProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 from decode.config.settings import settings
@@ -75,6 +75,7 @@ def discover_ollama_models() -> list[str]:
     models = payload.get("models", []) if isinstance(payload, dict) else []
     return [entry["name"] for entry in models if isinstance(entry, dict) and entry.get("name")]
 
+
 def discover_provider_models() -> list[str]:
     """List models available from the active provider for the interactive ``/model`` command."""
     if settings.llm_provider == "ollama":
@@ -102,7 +103,10 @@ def discover_provider_models() -> list[str]:
         )
         response.raise_for_status()
         entries = response.json().get("data", [])
-        return sorted(entry["id"] for entry in entries if isinstance(entry, dict) and entry.get("id"))
+        return sorted(
+            entry["id"] for entry in entries if isinstance(entry, dict) and entry.get("id")
+        )
+
     if settings.llm_provider == "modal":
         token_id = settings.modal_proxy_token_id.get_secret_value()
         token_secret = settings.modal_proxy_token_secret.get_secret_value()
@@ -116,7 +120,9 @@ def discover_provider_models() -> list[str]:
         )
         response.raise_for_status()
         entries = response.json().get("data", [])
-        return sorted(entry["id"] for entry in entries if isinstance(entry, dict) and entry.get("id"))
+        return sorted(
+            entry["id"] for entry in entries if isinstance(entry, dict) and entry.get("id")
+        )
     raise ValueError(f"unsupported llm_provider: {settings.llm_provider!r}")
 
 

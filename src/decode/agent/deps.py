@@ -33,8 +33,9 @@ from decode.permissions.gate import PermissionGate
 if TYPE_CHECKING:
     # Typing-only import: a runtime import would form a cycle (agents loader → decode.tools →
     # this module); the __future__ annotations keep the field annotation a string.
-    from decode.entities.agent_def import AgentDef
     from pydantic_ai.models import Model
+
+    from decode.entities.agent_def import AgentDef
 
 
 def _default_active_agent() -> AgentDef:
