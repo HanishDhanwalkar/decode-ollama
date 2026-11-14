@@ -338,7 +338,7 @@ async def _handle_model_command(
     runner: Runner,
     emit: Callable[[str], None],
 ) -> None:
-    """Open an arrow-key picker for available models and switch the idle session."""
+    """Open a provider/model picker and switch the idle session."""
     provider = settings.llm_provider
     if argument:
         emit(_MODEL_USAGE)
@@ -347,53 +347,69 @@ async def _handle_model_command(
         emit("Decode - busy; try /model again once the turn finishes.")
         return
 
-    try:
-        models = llm_providers.discover_provider_models()
-    except Exception:
-        logger.debug("model discovery failed for provider %s", provider, exc_info=True)
-        emit(f"Decode - could not list models for provider {provider}.")
-        return
+    models: list[tuple[llm_providers.Provider, str]] = []
+    failed_providers: list[llm_providers.Provider] = []
+    for model_provider in llm_providers.configured_model_providers():
+        try:
+            models.extend(
+                (model_provider, model)
+                for model in llm_providers.discover_provider_models(model_provider)
+            )
+        except Exception:
+            logger.debug("model discovery failed for provider %s", model_provider, exc_info=True)
+            failed_providers.append(model_provider)
+    for model_provider in failed_providers:
+        emit(f"Decode - could not list models for provider {model_provider}.")
     if not models:
-        emit(f"Decode - no models found for provider {provider}.")
+        if not failed_providers:
+            emit("Decode - no models found for configured providers.")
         return
-    if handler.model_id not in models:
-        models.insert(0, handler.model_id)
+    active_model = (provider, handler.model_id)
+    if active_model not in models:
+        models.insert(0, active_model)
 
     selection = await radiolist_dialog(
-        title="Select model",
-        text=f"Choose a model for provider {provider}:",
+        title="Select provider and model",
+        text="Choose a configured provider and model:",
         values=[
             (
-                available,
-                f"provider {provider} | model: {available}"
-                + (" (active)" if available == handler.model_id else ""),
+                (model_provider, model_id),
+                f"provider {model_provider} | model: {model_id}"
+                + (" (active)" if (model_provider, model_id) == active_model else ""),
             )
-            for available in models
+            for model_provider, model_id in models
         ],
-        default=handler.model_id,
+        default=active_model,
     ).run_async()
-    if selection is None or selection == handler.model_id:
+    if selection is None or selection == active_model:
         return
 
+    selected_provider, model_id = selection
     try:
-        model = llm_providers._build_model(model=selection)
-        window = resolve_context_window(selection)
+        model = llm_providers._build_model(model=model_id, provider=selected_provider)
+        window = resolve_context_window(
+            model_id, config=settings.model_copy(update={"llm_provider": selected_provider})
+        )
     except Exception:
         logger.debug(
-            "model switch to %s failed for provider %s", selection, provider, exc_info=True
+            "model switch to %s failed for provider %s",
+            model_id,
+            selected_provider,
+            exc_info=True,
         )
-        emit(f"Decode - could not switch to model {selection!r} for provider {provider}.")
+        emit(f"Decode - could not switch to model {model_id!r} for provider {selected_provider}.")
         return
 
-    handler.switch_model(model, model_id=selection, context_window_tokens=window)
+    handler.switch_model(model, model_id=model_id, context_window_tokens=window)
     model_setting = {
         "gemini": "gemini_model",
         "openrouter": "openrouter_model",
         "modal": "modal_endpoint_model",
         "ollama": "ollama_model",
-    }[provider]
-    setattr(settings, model_setting, selection)
-    emit(model_switch_confirmation(provider, selection))
+    }[selected_provider]
+    setattr(settings, model_setting, model_id)
+    settings.llm_provider = selected_provider
+    emit(model_switch_confirmation(selected_provider, model_id))
 
 
 # Inline lines for ``/compact`` (the COMPACTED path renders nothing — the ContextCompacted event

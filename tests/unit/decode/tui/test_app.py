@@ -708,13 +708,14 @@ def test_handle_mode_command_missing_name_shows_usage():
 @pytest.mark.parametrize("provider", ["gemini", "openrouter", "modal", "ollama"])
 async def test_handle_model_command_opens_picker_with_provider_qualified_models(mocker, provider):
     mocker.patch.object(app.settings, "llm_provider", provider)
+    mocker.patch.object(app.llm_providers, "configured_model_providers", return_value=[provider])
     mocker.patch.object(
         app.llm_providers,
         "discover_provider_models",
         return_value=["active-model", "other-model"],
     )
     handler = SimpleNamespace(model_id="active-model")
-    dialog = SimpleNamespace(run_async=mocker.AsyncMock(return_value="active-model"))
+    dialog = SimpleNamespace(run_async=mocker.AsyncMock(return_value=(provider, "active-model")))
     picker = mocker.patch.object(app, "radiolist_dialog", return_value=dialog)
     lines: list[str] = []
 
@@ -724,20 +725,23 @@ async def test_handle_model_command_opens_picker_with_provider_qualified_models(
 
     choices = picker.call_args.kwargs["values"]
     assert choices == [
-        ("active-model", f"provider {provider} | model: active-model (active)"),
-        ("other-model", f"provider {provider} | model: other-model"),
+        ((provider, "active-model"), f"provider {provider} | model: active-model (active)"),
+        ((provider, "other-model"), f"provider {provider} | model: other-model"),
     ]
-    assert picker.call_args.kwargs["default"] == "active-model"
+    assert picker.call_args.kwargs["default"] == (provider, "active-model")
     assert lines == []
 
 
 async def test_handle_model_command_switches_to_the_picked_ollama_model(mocker):
     mocker.patch.object(app.settings, "llm_provider", "ollama")
     mocker.patch.object(app.settings, "ollama_model", "laya:latest")
+    mocker.patch.object(app.llm_providers, "configured_model_providers", return_value=["ollama"])
     mocker.patch.object(
         app.llm_providers, "discover_provider_models", return_value=["qwen2.5-coder:7b"]
     )
-    dialog = SimpleNamespace(run_async=mocker.AsyncMock(return_value="qwen2.5-coder:7b"))
+    dialog = SimpleNamespace(
+        run_async=mocker.AsyncMock(return_value=("ollama", "qwen2.5-coder:7b"))
+    )
     mocker.patch.object(app, "radiolist_dialog", return_value=dialog)
     built_model = object()
     mocker.patch.object(app.llm_providers, "_build_model", return_value=built_model)
@@ -757,9 +761,84 @@ async def test_handle_model_command_switches_to_the_picked_ollama_model(mocker):
     assert lines == ["Decode - provider ollama | model: qwen2.5-coder:7b."]
 
 
+async def test_handle_model_command_switches_provider_and_model_for_this_session(mocker):
+    mocker.patch.object(app.settings, "llm_provider", "ollama")
+    mocker.patch.object(app.settings, "ollama_model", "local-model")
+    mocker.patch.object(app.settings, "openrouter_model", "openrouter/free")
+    mocker.patch.object(
+        app.llm_providers,
+        "configured_model_providers",
+        return_value=["ollama", "gemini", "openrouter"],
+    )
+    mocker.patch.object(
+        app.llm_providers,
+        "discover_provider_models",
+        side_effect={
+            "ollama": ["local-model"],
+            "gemini": ["gemini-3.8-flash"],
+            "openrouter": ["openai/gpt-4.1"],
+        }.__getitem__,
+    )
+    selection = ("openrouter", "openai/gpt-4.1")
+    dialog = SimpleNamespace(run_async=mocker.AsyncMock(return_value=selection))
+    picker = mocker.patch.object(app, "radiolist_dialog", return_value=dialog)
+    built_model = object()
+    build = mocker.patch.object(app.llm_providers, "_build_model", return_value=built_model)
+    resolve_window = mocker.patch.object(app, "resolve_context_window", return_value=128000)
+    switch_model = mocker.Mock()
+    handler = SimpleNamespace(model_id="local-model", switch_model=switch_model)
+    lines: list[str] = []
+
+    await app._handle_model_command(
+        "", handler=handler, runner=SimpleNamespace(active_turns=0), emit=lines.append
+    )
+
+    choices = picker.call_args.kwargs["values"]
+    assert ("gemini", "gemini-3.8-flash") in [value for value, _ in choices]
+    assert selection in [value for value, _ in choices]
+    build.assert_called_once_with(model="openai/gpt-4.1", provider="openrouter")
+    resolve_window.assert_called_once()
+    assert resolve_window.call_args.args == ("openai/gpt-4.1",)
+    assert resolve_window.call_args.kwargs["config"].llm_provider == "openrouter"
+    switch_model.assert_called_once_with(
+        built_model, model_id="openai/gpt-4.1", context_window_tokens=128000
+    )
+    assert app.settings.llm_provider == "openrouter"
+    assert app.settings.openrouter_model == "openai/gpt-4.1"
+    assert lines == ["Decode - provider openrouter | model: openai/gpt-4.1."]
+
+
+async def test_model_picker_keeps_other_providers_when_one_catalog_fails(mocker):
+    mocker.patch.object(app.settings, "llm_provider", "ollama")
+    mocker.patch.object(
+        app.llm_providers, "configured_model_providers", return_value=["ollama", "openrouter"]
+    )
+    mocker.patch.object(
+        app.llm_providers,
+        "discover_provider_models",
+        side_effect={"ollama": RuntimeError("offline"), "openrouter": ["vendor/model"]}.__getitem__,
+    )
+    dialog = SimpleNamespace(run_async=mocker.AsyncMock(return_value=None))
+    picker = mocker.patch.object(app, "radiolist_dialog", return_value=dialog)
+    lines: list[str] = []
+
+    await app._handle_model_command(
+        "",
+        handler=SimpleNamespace(model_id="local-model"),
+        runner=SimpleNamespace(active_turns=0),
+        emit=lines.append,
+    )
+
+    assert [value for value, _ in picker.call_args.kwargs["values"]] == [
+        ("ollama", "local-model"),
+        ("openrouter", "vendor/model"),
+    ]
+    assert lines == ["Decode - could not list models for provider ollama."]
+
+
 async def test_handle_model_command_refuses_to_open_picker_during_a_turn(mocker):
     mocker.patch.object(app.settings, "llm_provider", "gemini")
-    discover = mocker.patch.object(app.llm_providers, "_build_model")
+    discover = mocker.patch.object(app.llm_providers, "configured_model_providers")
     handler = SimpleNamespace(model_id="gemini-3.8-flash")
     lines: list[str] = []
 
@@ -773,6 +852,7 @@ async def test_handle_model_command_refuses_to_open_picker_during_a_turn(mocker)
 
 async def test_handle_model_command_cancel_does_not_change_model(mocker):
     mocker.patch.object(app.settings, "llm_provider", "gemini")
+    mocker.patch.object(app.llm_providers, "configured_model_providers", return_value=["gemini"])
     mocker.patch.object(
         app.llm_providers, "discover_provider_models", return_value=["gemini-2.5-flash"]
     )

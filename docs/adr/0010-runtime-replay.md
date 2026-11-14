@@ -112,7 +112,8 @@ REPL and its JSONL log are untouched (headless-only); `runtime/` stays the isola
 
 **Non-goals (NG, permanent):** decode-side `diff`/`cohort` commands; cross-provider model swap on
 replay; per-tool-call `output=`/`raise_=` mocks (use `--overrides checkpoint.X`); any change to the
-live REPL path (headless-only).
+live REPL path (headless-only). The separate interactive `/model` picker may switch providers for
+the current REPL session (ADR-0025); replay and headless model overrides remain provider-local.
 
 ## Diagram
 

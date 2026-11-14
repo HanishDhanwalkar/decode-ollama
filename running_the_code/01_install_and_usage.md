@@ -33,7 +33,8 @@ cd decode-ollama
 cp .env.example .env
 ```
 
-Then set **one** provider in `.env`:
+Set a default provider in `.env`; keys for other providers are optional, and `/model` lets an
+interactive session switch among providers with configured credentials:
 
 ```bash
 # Gemini — default provider, free key at https://aistudio.google.com/apikey
@@ -48,7 +49,7 @@ GEMINI_API_KEY=your-key
 # ollama pull qwen3:8b
 # LLM_PROVIDER=ollama
 # OLLAMA_BASE_URL=http://localhost:11434
-# The interactive `decode` command defaults to a pulled model; use `/model` to list or switch.
+# The interactive `decode` command defaults to a pulled model.
 # For headless `decode run`, also set OLLAMA_MODEL=qwen3:8b (or pass --model).
 ```
 

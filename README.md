@@ -29,7 +29,7 @@ In [LangChain's Terminal-Bench experiment](https://www.langchain.com/blog/the-an
 
 ```python
 agent = Agent(
-    build_model(settings.llm_provider),        # gemini | openrouter | modal
+    build_model(settings.llm_provider),        # gemini | openrouter | modal | ollama
     deps_type=AgentDeps,                       # cwd, event sink, permission gate
     output_type=[str, DeferredToolRequests],   # final answer, or tools paused for approval
 )
@@ -51,7 +51,7 @@ flowchart LR
     Context --> Agent["Pydantic AI agent loop"]
     Agent <--> Tools["File, shell, web, and task tools"]
     Tools --> Sandbox["Host / Docker / Modal workspace"]
-    Agent --> Providers["Gemini / OpenRouter / Modal"]
+    Agent --> Providers["Gemini / OpenRouter / Modal / Ollama"]
     Harness <--> Langfuse["Langfuse: traces, datasets, experiments, scores"]
     Harness <--> Kitaru["Kitaru: session recording and replay"]
     Agent --> Memory["Memory, skills, permissions, LSP"]
@@ -64,7 +64,7 @@ flowchart LR
 The code is written in Python, with the following frameworks and libraries:
 
 - **Agent Framework:** [Pydantic AI](https://ai.pydantic.dev)
-- **LLM Providers:** [Modal](https://modal.com/docs/guide/endpoints?source=decodingai&campaign=harnesseng) (open weights you serve yourself via SGLang), OpenRouter (open weights as a service), or Gemini (proprietary).
+- **LLM Providers:** [Modal](https://modal.com/docs/guide/endpoints?source=decodingai&campaign=harnesseng) (open weights you serve yourself via SGLang), OpenRouter (open weights as a service), or Gemini (proprietary) or Ollama (locally).
 - **Session Recording & Replays:** [Kitaru](https://www.zenml.io/product/kitaru?utm_source=decodingai&utm_medium=referral&utm_campaign=coding-agent-course&utm_content=brand)
 - **Tracing, eval orchestration, and trace mining:** [Langfuse](https://langfuse.com)
 - **Sandboxing:** local Docker & remote [Modal sandboxes](https://modal.com/docs/guide/sandboxes?source=decodingai&campaign=harnesseng)

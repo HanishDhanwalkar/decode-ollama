@@ -6,6 +6,7 @@ from typing import Literal
 
 import httpx
 from openai import AsyncOpenAI
+from pydantic import SecretStr
 from pydantic_ai.models import Model
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.ollama import OllamaModel
@@ -19,17 +20,17 @@ from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 from decode.config.settings import settings
 
+Provider = Literal["gemini", "openrouter", "modal", "ollama"]
 
-def _build_model(*, model: str | None = None) -> Model:
-    """Build the model for ``settings.llm_provider`` — the Provider Seam.
 
-    ``model`` overrides only the active provider's model id; it never changes the provider or
-    authentication path. Gemini uses the Generative-Language API-key path and never passes
-    ``vertexai=``. OpenRouter and Modal use ``OpenAIChatModel``; Modal uses a custom client with
-    the endpoint URL and optional dual-header proxy-token authentication. Gemini and OpenRouter
-    keys come from ``Settings``; Modal credentials are headers rather than a single API key.
+def _build_model(*, model: str | None = None, provider: Provider | None = None) -> Model:
+    """Build a model for the configured provider, or an explicit provider selection.
+
+    Gemini uses the Generative-Language API-key path and never passes ``vertexai=``. OpenRouter and
+    Modal use ``OpenAIChatModel``; Modal uses a custom client with the endpoint URL and optional
+    dual-header proxy-token authentication. Provider credentials come from ``Settings``.
     """
-    provider = settings.llm_provider
+    provider = provider or settings.llm_provider
     if provider == "gemini":
         return GoogleModel(
             model or settings.gemini_model,
@@ -76,11 +77,28 @@ def discover_ollama_models() -> list[str]:
     return [entry["name"] for entry in models if isinstance(entry, dict) and entry.get("name")]
 
 
-def discover_provider_models() -> list[str]:
-    """List models available from the active provider for the interactive ``/model`` command."""
-    if settings.llm_provider == "ollama":
+def configured_model_providers() -> list[Provider]:
+    """Return providers that have credentials configured, plus the active local provider."""
+    providers: list[Provider] = []
+    if _has_secret(settings.gemini_api_key):
+        providers.append("gemini")
+    if _has_secret(settings.openrouter_api_key):
+        providers.append("openrouter")
+    if settings.modal_endpoint_url:
+        providers.append("modal")
+    if settings.ollama_model or settings.llm_provider == "ollama":
+        providers.append("ollama")
+    if settings.llm_provider not in providers:
+        providers.insert(0, settings.llm_provider)
+    return providers
+
+
+def discover_provider_models(provider: Provider | None = None) -> list[str]:
+    """List models available from one provider for the interactive ``/model`` command."""
+    provider = provider or settings.llm_provider
+    if provider == "ollama":
         return discover_ollama_models()
-    if settings.llm_provider == "gemini":
+    if provider == "gemini":
         response = httpx.get(
             "https://generativelanguage.googleapis.com/v1beta/models",
             params={"key": _provider_api_key("gemini")},
@@ -95,19 +113,21 @@ def discover_provider_models() -> list[str]:
             and entry.get("name")
             and "generateContent" in entry.get("supportedGenerationMethods", [])
         )
-    if settings.llm_provider == "openrouter":
-        response = httpx.get(
-            "https://openrouter.ai/api/v1/models",
-            headers={"Authorization": f"Bearer {_provider_api_key('openrouter')}"},
-            timeout=5.0,
-        )
-        response.raise_for_status()
-        entries = response.json().get("data", [])
-        return sorted(
-            entry["id"] for entry in entries if isinstance(entry, dict) and entry.get("id")
-        )
+    if provider == "openrouter":
+        # [Option]: Uncomment to Discover OpenRouter's paid/BYOK models
+        # response = httpx.get(
+        #     "https://openrouter.ai/api/v1/models",
+        #     headers={"Authorization": f"Bearer {_provider_api_key('openrouter')}"},
+        #     timeout=5.0,
+        # )
+        # response.raise_for_status()
+        # entries = response.json().get("data", [])
+        # return sorted(
+        #     entry["id"] for entry in entries if isinstance(entry, dict) and entry.get("id")
+        # )
+        return ["openrouter/free"]  # the default free model router, always available
 
-    if settings.llm_provider == "modal":
+    if provider == "modal":
         token_id = settings.modal_proxy_token_id.get_secret_value()
         token_secret = settings.modal_proxy_token_secret.get_secret_value()
         headers = (
@@ -123,7 +143,11 @@ def discover_provider_models() -> list[str]:
         return sorted(
             entry["id"] for entry in entries if isinstance(entry, dict) and entry.get("id")
         )
-    raise ValueError(f"unsupported llm_provider: {settings.llm_provider!r}")
+    raise ValueError(f"unsupported llm_provider: {provider!r}")
+
+
+def _has_secret(secret: SecretStr) -> bool:
+    return bool(secret.get_secret_value())
 
 
 def _modal_profile(inferred: ModelProfile) -> ModelProfile:

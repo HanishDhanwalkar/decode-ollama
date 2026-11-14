@@ -749,6 +749,53 @@ def test_discover_ollama_models_reads_names_from_tags_endpoint(mocker):
     response.raise_for_status.assert_called_once_with()
 
 
+def test_configured_model_providers_includes_keyed_cloud_providers(mocker):
+    mocker.patch.object(llm_providers.settings, "llm_provider", "ollama")
+    mocker.patch.object(llm_providers.settings, "gemini_api_key", SecretStr("gemini-test-key"))
+    mocker.patch.object(
+        llm_providers.settings, "openrouter_api_key", SecretStr("openrouter-test-key")
+    )
+    mocker.patch.object(llm_providers.settings, "modal_endpoint_url", "")
+    mocker.patch.object(llm_providers.settings, "ollama_model", "local-model")
+
+    assert llm_providers.configured_model_providers() == ["gemini", "openrouter", "ollama"]
+
+
+def test_discover_gemini_models_filters_to_generation_models(mocker):
+    response = mocker.Mock()
+    response.json.return_value = {
+        "models": [
+            {"name": "models/gemini-flash", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/embed", "supportedGenerationMethods": ["embedContent"]},
+        ]
+    }
+    get = mocker.patch.object(llm_providers.httpx, "get", return_value=response)
+    mocker.patch.object(llm_providers.settings, "gemini_api_key", SecretStr("gemini-test-key"))
+
+    assert llm_providers.discover_provider_models("gemini") == ["gemini-flash"]
+    get.assert_called_once_with(
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        params={"key": "gemini-test-key"},
+        timeout=5.0,
+    )
+
+
+def test_discover_openrouter_models_uses_the_openrouter_key(mocker):
+    response = mocker.Mock()
+    response.json.return_value = {"data": [{"id": "vendor/model"}, {"name": "ignored"}]}
+    get = mocker.patch.object(llm_providers.httpx, "get", return_value=response)
+    mocker.patch.object(
+        llm_providers.settings, "openrouter_api_key", SecretStr("openrouter-test-key")
+    )
+
+    assert llm_providers.discover_provider_models("openrouter") == ["vendor/model"]
+    get.assert_called_once_with(
+        "https://openrouter.ai/api/v1/models",
+        headers={"Authorization": "Bearer openrouter-test-key"},
+        timeout=5.0,
+    )
+
+
 async def test_modal_tool_definitions_never_carry_the_strict_flag_on_the_wire(tmp_path, mocker):
     """No ``"strict": true`` on any tool a Modal endpoint receives (regression guard).
 
@@ -812,10 +859,9 @@ def test_build_model_rejects_an_unsupported_provider(mocker):
 # Model Override: the model id threaded as a flow parameter (ADR-0010 §2, task 067)
 #
 # ``_build_model`` / ``build_agent`` take ``model: str | None = None``. ``None`` reads
-# ``settings.<provider>_model`` (byte-unchanged — the interactive REPL path); a value overrides
-# ONLY the active provider's model id. The provider stays ``LLM_PROVIDER``-selected — the override
-# never changes the provider class or the auth/key path (permanent non-goal: no cross-provider
-# swap). Construction stays offline for every provider (building a model issues no model request).
+# ``settings.<provider>_model`` (byte-unchanged — the default interactive REPL path); a value
+# overrides that provider's model id. ``/model`` can also select a different configured provider
+# for the current REPL session. Construction stays offline (no model request during construction).
 
 # Shaped like a real gateway id (``vendor/model``): OpenRouter ids always carry the vendor prefix,
 # and ``OpenRouterProvider.model_profile`` splits on it to pick the model profile.
@@ -887,6 +933,17 @@ def test_openrouter_override_keeps_the_openrouter_provider_and_key(mocker):
     assert isinstance(model, OpenAIChatModel)
     assert isinstance(model.provider, OpenRouterProvider)
     assert model.provider.client.api_key == "or-key"
+
+
+def test_explicit_provider_builds_model_independently_of_the_configured_default(mocker):
+    _patch_provider(mocker, "openrouter")
+    mocker.patch.object(llm_providers.settings, "llm_provider", "ollama")
+
+    model = _build_model(provider="openrouter", model="vendor/model")
+
+    assert isinstance(model, OpenAIChatModel)
+    assert model.system == "openrouter"
+    assert model.model_name == "vendor/model"
 
 
 def test_modal_override_keeps_the_custom_client_and_proxy_headers(mocker):
