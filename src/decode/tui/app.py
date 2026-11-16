@@ -56,6 +56,7 @@ from decode.runtime.recording import wrap_for_recording
 from decode.services.lsp.service import shutdown_all as shutdown_lsp_servers
 from decode.skills.loader import load_skills
 from decode.skills.payload import format_skill_payload
+from decode.sponsors.hook import SponsorStateMachineHook
 from decode.tools.bash import close_executor, export_executor, warm_executor
 from decode.tui import render
 
@@ -668,17 +669,20 @@ def _bottom_toolbar(
     handler: AgentTurnHandler,
     runner: Runner,
     decisions: DecisionChannel,
+    sponsor_hook: SponsorStateMachineHook | None = None,
 ) -> HTML:
     """The footer as prompt_toolkit formatted text: a busy spinner + context fill gauge + live hint.
 
     Called on every render with live state, so the footer updates immediately after an agent/mode
     switch. The spinner shows only while the turn is ACTIVELY working — hidden when idle and when
     the turn is paused on the DecisionChannel awaiting a human (else it would read "working…"
-    while the user is the one being asked to type). The gauge (ADR-0006 §9) reads the handler's
-    public ``last_input_tokens`` over the run's resolved window (``deps.context_window_tokens``,
-    task 123 — falling back to the configured one when nothing resolved it), so the gauge and the
-    compaction trigger can never disagree about the denominator; ``warn_at`` / ``danger_at`` are the
-    fill lines derived from the same reserve fractions the compaction cascade fires on.
+    while the user is the one being asked to type). When active, rotating B2B sponsor taglines are
+    displayed via ``sponsor_hook``, falling back to default working/thinking messages if disabled or
+    unavailable. The gauge (ADR-0006 §9) reads the handler's public ``last_input_tokens`` over the
+    run's resolved window (``deps.context_window_tokens``, task 123 — falling back to the configured
+    one when nothing resolved it), so the gauge and the compaction trigger can never disagree about
+    the denominator; ``warn_at`` / ``danger_at`` are the fill lines derived from the same reserve
+    fractions the compaction cascade fires on.
     """
     window = deps.context_window_tokens or settings.compaction_context_window_tokens
     fraction = handler.last_input_tokens / window if window > 0 else 0.0
@@ -690,7 +694,8 @@ def _bottom_toolbar(
         spinner = ""
     else:
         frame = render.spinner_frame(int(time.monotonic() / _FOOTER_REFRESH_S))
-        spinner = f'<style fg="cyan">{frame} working…</style> '
+        msg = sponsor_hook.spinner_text(runner.phase) if sponsor_hook is not None else "working…"
+        spinner = f'<style fg="cyan">{frame} {msg}</style> '
     return HTML(f'{spinner}<style fg="{color}">{label}</style> <b>{hint}</b>')
 
 
@@ -847,6 +852,7 @@ async def run_app(
     mode: str | None = None,
     repo: str | None = None,
     local: bool = False,
+    no_ads: bool = False,
 ) -> None:
     """Run the REPL until ``Ctrl-D`` or ``/quit``, routing input into the harness.
 
@@ -872,8 +878,15 @@ async def run_app(
     # (the persona rides ``deps.active_agent``, not the Agent object — ADR-0003 §7).
     agent_name = agent
 
+    # Sponsor state machine hook for B2B sponsor taglines in status line spinner
+    sponsor_hook = SponsorStateMachineHook(settings, no_ads_flag=no_ads)
+
     # The harness streams events into this sink (append-style; owns the once-per-turn prefix).
-    _on_event = _make_event_sink(console)
+    _sink = _make_event_sink(console)
+
+    def _on_event(event: events.Event) -> None:
+        sponsor_hook.on_event(event)
+        _sink(event)
 
     # Both resolvers await on the SAME single-flight decision channel — the one mid-turn HITL
     # surface — so a permission ask and an ask_user question can never collide.
@@ -943,7 +956,9 @@ async def run_app(
         refresh_interval=_FOOTER_REFRESH_S,
         # ``handler`` / ``runner`` are bound a few lines below; the lambda runs only during the
         # prompt loop (after they exist), so the late-bound reference is safe.
-        bottom_toolbar=lambda: _bottom_toolbar(deps, gate, handler, runner, decisions),
+        bottom_toolbar=lambda: _bottom_toolbar(
+            deps, gate, handler, runner, decisions, sponsor_hook=sponsor_hook
+        ),
     )
     # Persistence (ADR-0002 §9): replay a prior session if asked, then open a fresh append-only log.
     resumed_history = _load_resume_history(resume, console)
