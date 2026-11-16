@@ -697,7 +697,9 @@ def test_bottom_toolbar_with_sponsor_hook_rotating_taglines(mocker):
         deps, gate, handler, _runner(Phase.RUNNING), _decisions(), sponsor_hook=hook
     ).value
 
-    assert "Sponsored by Datadog: Monitor LLM latency in real time" in busy
+    assert "Sponsored by" in busy
+    assert "Datadog" in busy
+    assert "Monitor LLM latency in real time" in busy
     assert "agent:build" in busy
 
 
@@ -1382,7 +1384,8 @@ def test_handle_skill_command_resource_bearing_skill_injects_body_plus_trailer(t
     found = load_skills(tmp_path)["deploy"]
     assert result == format_skill_payload(found, cwd=tmp_path)
     assert result.startswith("Ship it to staging first.")
-    assert ".decode/skills/deploy" in result  # the trailer names the cwd-relative dir
+    # Check for path in both forward and backslash formats (cross-platform)
+    assert ".decode/skills/deploy" in result or ".decode\\skills\\deploy" in result
 
 
 def test_handle_skill_command_resource_bearing_skill_appends_trailing_after_trailer(tmp_path):

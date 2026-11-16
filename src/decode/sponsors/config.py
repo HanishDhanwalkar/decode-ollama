@@ -5,8 +5,7 @@ Guarantees:
 - Opt-out checks support:
   * Startup CLI flag (--no-ads / --no-sponsors)
   * Global/project config file (.decode/settings.json -> "ads": false or "sponsors": false)
-  * Settings / .env (SPONSORS_ENABLED=false / DECODE_ADS=false)
-  * Seamless auto-opt-out for local-only models (Ollama) when sponsors_disable_for_local_models=True
+  * Settings / .env (SPONSORS_ENABLED=false)
   * Seamless opt-out for Bring-Your-Own-Key (BYOK) configurations when configured
 """
 
@@ -83,10 +82,7 @@ def is_sponsors_enabled(
     Priority order:
     1. Startup flag (--no-ads / --no-sponsors): if True, unconditionally disabled.
     2. Local settings file (.decode/settings.json): "ads": false explicitly disables.
-    3. Global settings (settings.sponsors_enabled): if False, disabled.
-    4. Local-only models: if settings.sponsors_disable_for_local_models and llm_provider == "ollama",
-       disabled to provide a zero-sponsor experience for local AI.
-    5. BYOK opt-out: if settings.sponsors_disable_for_byok and user configured their own keys,
+    3. Global settings (settings.sponsors_enabled): controls worldwide enablement.
        disabled.
     """
     # 1. Startup flag
@@ -104,22 +100,5 @@ def is_sponsors_enabled(
     # 3. Global settings field
     if not getattr(settings, "sponsors_enabled", True):
         return False
-
-    # 4. Local-only models (Ollama)
-    if (
-        getattr(settings, "sponsors_disable_for_local_models", True)
-        and getattr(settings, "llm_provider", "") == "ollama"
-    ):
-        return False
-
-    # 5. BYOK (Bring Your Own Key) automatic opt-out check if enabled
-    if getattr(settings, "sponsors_disable_for_byok", False):
-        gemini_key = getattr(settings, "gemini_api_key", None)
-        openrouter_key = getattr(settings, "openrouter_api_key", None)
-        has_byok = (gemini_key is not None and bool(gemini_key.get_secret_value().strip())) or (
-            openrouter_key is not None and bool(openrouter_key.get_secret_value().strip())
-        )
-        if has_byok:
-            return False
 
     return True

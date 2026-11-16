@@ -100,9 +100,5 @@ class SponsorCampaign:
         - Clean attribution.
         """
         clean_tagline = " ".join(self.tagline.strip().splitlines())
-        clean_name = self.sponsor_name.strip()
-        if clean_name and not clean_tagline.lower().startswith(clean_name.lower()):
-            text = f"Sponsored by {clean_name}: {clean_tagline}"
-        else:
-            text = f"Sponsored: {clean_tagline}"
-        return " ".join(text.split())
+
+        return " ".join(clean_tagline.split())

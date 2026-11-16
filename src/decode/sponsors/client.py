@@ -98,12 +98,8 @@ class SponsorClient:
                 return self.get_cached_campaigns()
 
     async def _do_fetch(self, metadata: ClientMetadata | None) -> list[SponsorCampaign]:
-        """Perform the actual HTTP REST or JSON-RPC request."""
-        meta_dict = metadata.to_dict() if metadata is not None else {}
+        """Perform the actual HTTP request to fetch campaigns."""
         timeout = httpx.Timeout(self.timeout_s)
-
-        # Decide whether to use JSON-RPC or REST
-        is_json_rpc = "rpc" in self.endpoint_url.lower()
 
         client = self._http_client
         created_client = False
@@ -112,31 +108,14 @@ class SponsorClient:
             created_client = True
 
         try:
-            if is_json_rpc:
-                payload = {
-                    "jsonrpc": "2.0",
-                    "method": "campaigns.fetch",
-                    "params": meta_dict,
-                    "id": "1",
-                }
-                resp = await client.post(
-                    self.endpoint_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json", "User-Agent": "decode-harness"},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return self._parse_json_rpc_response(data)
-            else:
-                # REST endpoint
-                resp = await client.post(
-                    self.endpoint_url,
-                    json=meta_dict,
-                    headers={"Content-Type": "application/json", "User-Agent": "decode-harness"},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return self._parse_rest_response(data)
+            # Simple GET request to the campaigns endpoint
+            resp = await client.get(
+                self.endpoint_url,
+                headers={"User-Agent": "decode-harness"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return self._parse_rest_response(data)
         finally:
             if created_client:
                 await client.aclose()
@@ -173,13 +152,15 @@ class SponsorClient:
             tagline = str(item.get("tagline") or item.get("text") or "")
             if not tagline:
                 continue
+            # Use 'priority' from backend (fallback to 'weight' if present, then 1.0)
+            weight = float(item.get("priority") or item.get("weight", 1.0))
             campaigns.append(
                 SponsorCampaign(
                     campaign_id=campaign_id or f"cmp-{len(campaigns)}",
                     sponsor_name=sponsor_name,
                     tagline=tagline,
                     url=item.get("url"),
-                    weight=float(item.get("weight", 1.0)),
+                    weight=weight,
                 )
             )
         return campaigns

@@ -33,6 +33,7 @@ dependencies = [
     "pydantic-ai-slim[google,openai]>=2.46,<2.47",
     "httpx>=0.28.1",
     "markdownify>=1.2.3",
+    "aiohttp>=3.10",  # Mock sponsor server for local development
     "pyyaml>=6.0.3",
     "modal>=1.5.3",
     "anyio>=4.14.2",

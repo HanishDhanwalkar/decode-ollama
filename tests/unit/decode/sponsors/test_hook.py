@@ -64,7 +64,7 @@ def test_hook_state_machine_events(mock_campaigns):
 
     # ToolCallStarted (executing)
     hook.on_event(
-        events.ToolCallStarted(call_id="call-1", tool_name="bash", args={"command": "ls"})
+        events.ToolCallStarted(tool_call_id="call-1", name="bash", args='{"command": "ls"}')
     )
     assert hook.state == HarnessState.EXECUTING
 
@@ -89,17 +89,21 @@ def test_hook_spinner_text_when_disabled():
 
 
 def test_hook_spinner_text_active_campaign(mock_campaigns):
-    """When active, spinner_text shows the formatted sponsor tagline."""
+    """When active, spinner_text shows a formatted sponsor tagline."""
     settings = Settings(sponsors_enabled=True, llm_provider="gemini")
-    rotator = SponsorRotator(mock_campaigns)
+    rotator = SponsorRotator(
+        mock_campaigns, weighted=False
+    )  # Use round-robin for deterministic test
     hook = SponsorStateMachineHook(settings, rotator=rotator)
 
     text = hook.spinner_text(Phase.RUNNING)
+    # With round-robin, first call returns first campaign
     assert "Sponsored by PostHog: Product analytics for modern developers" in text
 
-    # Advance to next campaign
+    # Advance to next campaign via phase change
     hook.on_phase_change(Phase.IDLE, Phase.DISPATCHING)
     text2 = hook.spinner_text(Phase.RUNNING)
+    # Second call returns second campaign
     assert "Sponsored by Neon: Serverless Postgres for AI agents" in text2
 
 

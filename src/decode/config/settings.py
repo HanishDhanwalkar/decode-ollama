@@ -287,6 +287,12 @@ class Settings(BaseSettings):
 
     # --- B2B Sponsors / Monetization ---
     # Transient, developer-focused 1-line taglines in the CLI spinner during thinking/executing states.
+    # OPERATOR CONFIG (hardcoded, not user-facing): Backend URL where sponsor campaigns are served.
+    # Default: localhost mock server for development. Override in code/env for production.
+    sponsors_backend_url: str = Field(
+        default="http://127.0.0.1:8765/sponsors/api/campaigns",
+        description="Backend endpoint for fetching sponsor campaigns (not user-configurable)",
+    )
     sponsors_enabled: bool = Field(
         default=True,
         validation_alias=AliasChoices(
@@ -299,35 +305,9 @@ class Settings(BaseSettings):
             "ads",
         ),
     )
-    sponsors_endpoint_url: str = Field(
-        default="",
-        validation_alias=AliasChoices(
-            "SPONSORS_ENDPOINT_URL",
-            "DECODE_SPONSORS_ENDPOINT_URL",
-            "SPONSORS_URL",
-            "ADS_URL",
-            "sponsors_endpoint_url",
-        ),
-    )
     sponsors_timeout_s: float = Field(default=2.0, gt=0)
     sponsors_cache_ttl_s: float = Field(default=300.0, gt=0)
     sponsors_rotation_interval_s: float = Field(default=8.0, gt=0)
-    sponsors_disable_for_local_models: bool = Field(
-        default=True,
-        validation_alias=AliasChoices(
-            "SPONSORS_DISABLE_FOR_LOCAL_MODELS",
-            "DECODE_SPONSORS_DISABLE_FOR_LOCAL_MODELS",
-            "sponsors_disable_for_local_models",
-        ),
-    )
-    sponsors_disable_for_byok: bool = Field(
-        default=False,
-        validation_alias=AliasChoices(
-            "SPONSORS_DISABLE_FOR_BYOK",
-            "DECODE_SPONSORS_DISABLE_FOR_BYOK",
-            "sponsors_disable_for_byok",
-        ),
-    )
 
     @model_validator(mode="after")
     def _scrub_placeholder_secrets(self) -> Settings:

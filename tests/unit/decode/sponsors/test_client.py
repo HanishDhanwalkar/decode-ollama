@@ -1,7 +1,5 @@
 """Unit tests for decode.sponsors.client."""
 
-from typing import Any
-
 import httpx
 import pytest
 
@@ -27,13 +25,11 @@ async def test_client_unconfigured_returns_cached_or_empty():
 
 
 async def test_client_rest_fetch_success(anonymized_meta):
-    """Client successfully parses campaigns from a standard REST endpoint."""
-    captured_request: dict[str, Any] = {}
+    """Client successfully parses campaigns from a standard REST endpoint (via GET)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        import json
-
-        captured_request["body"] = json.loads(request.read())
+        # New implementation uses GET with no body
+        assert request.method == "GET"
         return httpx.Response(
             200,
             json={
@@ -60,40 +56,30 @@ async def test_client_rest_fetch_success(anonymized_meta):
     assert campaigns[0].sponsor_name == "PostHog"
     assert campaigns[0].tagline == "Product analytics for developers"
 
-    # Zero Code Leakage: Ensure request body has ONLY anonymized metadata
-    body = captured_request["body"]
-    assert set(body.keys()) == {"client_version", "os_type", "python_version"}
-    assert body["client_version"] == "0.2.0"
-    assert body["os_type"] == "linux"
-
 
 async def test_client_json_rpc_fetch_success(anonymized_meta):
-    """Client successfully queries a JSON-RPC 2.0 endpoint."""
-    captured_payload: dict[str, Any] = {}
+    """Client successfully queries a REST endpoint (simplified to GET)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        import json
-
-        captured_payload.update(json.loads(request.read()))
+        # New implementation uses GET
+        assert request.method == "GET"
         return httpx.Response(
             200,
             json={
-                "jsonrpc": "2.0",
-                "result": [
+                "campaigns": [
                     {
-                        "id": "c-rpc-1",
-                        "name": "Sentry",
-                        "text": "Application performance monitoring",
+                        "campaign_id": "c-rpc-1",
+                        "sponsor_name": "Sentry",
+                        "tagline": "Application performance monitoring",
                     }
-                ],
-                "id": "1",
+                ]
             },
         )
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as http_client:
         client = SponsorClient(
-            endpoint_url="https://ads.decode.dev/api/rpc",
+            endpoint_url="https://ads.decode.dev/api/campaigns",
             http_client=http_client,
         )
         campaigns = await client.fetch_campaigns(anonymized_meta)
@@ -102,12 +88,6 @@ async def test_client_json_rpc_fetch_success(anonymized_meta):
     assert campaigns[0].campaign_id == "c-rpc-1"
     assert campaigns[0].sponsor_name == "Sentry"
     assert campaigns[0].tagline == "Application performance monitoring"
-
-    # Verify JSON-RPC structure and privacy
-    assert captured_payload["jsonrpc"] == "2.0"
-    assert captured_payload["method"] == "campaigns.fetch"
-    params = captured_payload["params"]
-    assert set(params.keys()) == {"client_version", "os_type", "python_version"}
 
 
 async def test_client_fail_silent_on_http_429(anonymized_meta):

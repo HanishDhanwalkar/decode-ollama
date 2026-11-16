@@ -75,50 +75,10 @@ def test_is_sponsors_enabled_global_settings_opt_out():
     assert not is_sponsors_enabled(settings)
 
 
-def test_is_sponsors_enabled_local_model_ollama_auto_opt_out():
-    """Ollama local models automatically opt out when sponsors_disable_for_local_models=True."""
-    settings = Settings(
-        sponsors_enabled=True,
-        llm_provider="ollama",
-        sponsors_disable_for_local_models=True,
-    )
-    assert not is_sponsors_enabled(settings)
-
-    # If the user turns off local model auto-opt-out, it remains enabled
-    settings_manual = Settings(
-        sponsors_enabled=True,
-        llm_provider="ollama",
-        sponsors_disable_for_local_models=False,
-    )
-    assert is_sponsors_enabled(settings_manual)
-
-
-def test_is_sponsors_enabled_byok_opt_out():
-    """BYOK users automatically opt out when sponsors_disable_for_byok=True."""
-    settings_byok = Settings(
-        sponsors_enabled=True,
-        llm_provider="gemini",
-        gemini_api_key=SecretStr("my-personal-byok-key"),
-        sponsors_disable_for_byok=True,
-    )
-    assert not is_sponsors_enabled(settings_byok)
-
-    # Disabled flag means BYOK key doesn't disable sponsors
-    settings_no_byok_opt = Settings(
-        sponsors_enabled=True,
-        llm_provider="gemini",
-        gemini_api_key=SecretStr("my-personal-byok-key"),
-        sponsors_disable_for_byok=False,
-    )
-    assert is_sponsors_enabled(settings_no_byok_opt)
-
-
 def test_is_sponsors_enabled_default_active():
     """Sponsors are active when configured and not opted out."""
     settings = Settings(
         sponsors_enabled=True,
         llm_provider="gemini",
-        sponsors_disable_for_local_models=True,
-        sponsors_disable_for_byok=False,
     )
     assert is_sponsors_enabled(settings)
