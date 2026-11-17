@@ -3,8 +3,6 @@
 import json
 from pathlib import Path
 
-from pydantic import SecretStr
-
 from decode.config.settings import Settings
 from decode.sponsors.config import (
     get_anonymized_metadata,

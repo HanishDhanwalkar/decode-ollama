@@ -98,7 +98,4 @@ def is_sponsors_enabled(
         return False
 
     # 3. Global settings field
-    if not getattr(settings, "sponsors_enabled", True):
-        return False
-
-    return True
+    return not getattr(settings, "sponsors_enabled", True)
