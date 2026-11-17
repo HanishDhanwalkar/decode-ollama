@@ -473,6 +473,7 @@ name = "decode"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "anyio" },
     { name = "click" },
     { name = "httpx" },
@@ -504,6 +505,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.10" },
     { name = "anyio", specifier = ">=4.14.2" },
     { name = "click", specifier = ">=8.1,<9" },
     { name = "httpx", specifier = ">=0.28.1" },

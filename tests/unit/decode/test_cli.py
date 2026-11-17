@@ -1113,6 +1113,18 @@ def test_cli_no_repo_passes_none_to_run_app(mocker):
     assert run_app.await_args.kwargs.get("local") is False
 
 
+def test_cli_no_ads_option_passes_to_run_app(mocker):
+    mocker.patch.object(cli_mod.settings, "sandbox_mode", "docker")
+    mocker.patch("decode.cli._docker_daemon_reachable", return_value=True)
+    run_app = mocker.patch("decode.cli.run_app", new=mocker.AsyncMock())
+
+    result = CliRunner().invoke(cli, ["--no-ads"])
+
+    assert result.exit_code == 0
+    run_app.assert_awaited_once()
+    assert run_app.await_args.kwargs.get("no_ads") is True
+
+
 # --version flag
 
 

@@ -285,6 +285,30 @@ class Settings(BaseSettings):
     # eval traces never mix into ``decode-<env>``.
     eval_project_name: str = "decode-evals"
 
+    # --- B2B Sponsors / Monetization ---
+    # Transient, developer-focused 1-line taglines in the CLI spinner during thinking/executing states.
+    # OPERATOR CONFIG (hardcoded, not user-facing): Backend URL where sponsor campaigns are served.
+    # Default: localhost mock server for development. Override in code/env for production.
+    sponsors_backend_url: str = Field(
+        default="http://127.0.0.1:8765/sponsors/api/campaigns",
+        description="Backend endpoint for fetching sponsor campaigns (not user-configurable)",
+    )
+    sponsors_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "SPONSORS_ENABLED",
+            "DECODE_SPONSORS_ENABLED",
+            "DECODE_ADS",
+            "ADS_ENABLED",
+            "ADS",
+            "sponsors_enabled",
+            "ads",
+        ),
+    )
+    sponsors_timeout_s: float = Field(default=2.0, gt=0)
+    sponsors_cache_ttl_s: float = Field(default=300.0, gt=0)
+    sponsors_rotation_interval_s: float = Field(default=8.0, gt=0)
+
     @model_validator(mode="after")
     def _scrub_placeholder_secrets(self) -> Settings:
         """Read an unfilled ``.env.example`` placeholder (``changeme``) as UNSET.

@@ -22,12 +22,14 @@ from typing import TYPE_CHECKING
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.formatted_text import HTML, to_formatted_text
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import radiolist_dialog
 from pydantic_ai.messages import ModelMessage
+from rich import print as rprint
 from rich.console import Console
+from rich.style import Style
 from rich.text import Text
 
 from decode import observability
@@ -56,6 +58,7 @@ from decode.runtime.recording import wrap_for_recording
 from decode.services.lsp.service import shutdown_all as shutdown_lsp_servers
 from decode.skills.loader import load_skills
 from decode.skills.payload import format_skill_payload
+from decode.sponsors.hook import SponsorStateMachineHook
 from decode.tools.bash import close_executor, export_executor, warm_executor
 from decode.tui import render
 
@@ -134,6 +137,24 @@ def is_clear_command(line: str) -> bool:
 def is_ship_command(line: str) -> bool:
     """True when ``line`` is the ``/ship`` command (ignoring surrounding whitespace)."""
     return line.strip() == _SHIP_COMMAND
+
+
+def display_sponsor_ad(sponsor_name: str, tagline: str, url: str | None) -> None:
+    """Display a clickable sponsor ad using Rich's link support.
+
+    Rich renders OSC 8 hyperlink codes for terminals that support it (modern terminals).
+    Falls back to underlined text on terminals without clickable link support.
+    """
+
+    # Build the clickable ad with Rich's link support
+    ad_text = Text("📢Sponsored by ", style="white")
+    ad_text.append(sponsor_name, style="cyan bold")
+    ad_text.append(" | ", style="dim")
+    ad_text.append(tagline, style="white")
+    ad_text.append(" | ", style="dim")
+    # Use Style object directly to properly render OSC 8 hyperlinks
+    ad_text.append("visit", style=Style(color="green", underline=True, link=url))
+    rprint(ad_text)
 
 
 def footer_hint(agent: str, mode: str, *, verbose: bool) -> str:
@@ -388,7 +409,8 @@ async def _handle_model_command(
     try:
         model = llm_providers._build_model(model=model_id, provider=selected_provider)
         window = resolve_context_window(
-            model_id, config=settings.model_copy(update={"llm_provider": selected_provider})
+            model_id,
+            config=settings.model_copy(update={"llm_provider": selected_provider}),
         )
     except Exception:
         logger.debug(
@@ -668,17 +690,19 @@ def _bottom_toolbar(
     handler: AgentTurnHandler,
     runner: Runner,
     decisions: DecisionChannel,
-) -> HTML:
-    """The footer as prompt_toolkit formatted text: a busy spinner + context fill gauge + live hint.
+    sponsor_hook: SponsorStateMachineHook | None = None,
+) -> HTML | list:
+    """The footer as prompt_toolkit formatted text: sponsor ads + spinner + context gauge + hint.
 
     Called on every render with live state, so the footer updates immediately after an agent/mode
     switch. The spinner shows only while the turn is ACTIVELY working — hidden when idle and when
     the turn is paused on the DecisionChannel awaiting a human (else it would read "working…"
-    while the user is the one being asked to type). The gauge (ADR-0006 §9) reads the handler's
-    public ``last_input_tokens`` over the run's resolved window (``deps.context_window_tokens``,
-    task 123 — falling back to the configured one when nothing resolved it), so the gauge and the
-    compaction trigger can never disagree about the denominator; ``warn_at`` / ``danger_at`` are the
-    fill lines derived from the same reserve fractions the compaction cascade fires on.
+    while the user is the one being asked to type). Sponsor taglines appear on their own line
+    above the status footer. The gauge (ADR-0006 §9) reads the handler's public ``last_input_tokens``
+    over the run's resolved window (``deps.context_window_tokens``, task 123 — falling back to the
+    configured one when nothing resolved it), so the gauge and the compaction trigger can never
+    disagree about the denominator; ``warn_at`` / ``danger_at`` are the fill lines derived from the
+    same reserve fractions the compaction cascade fires on.
     """
     window = deps.context_window_tokens or settings.compaction_context_window_tokens
     fraction = handler.last_input_tokens / window if window > 0 else 0.0
@@ -690,8 +714,41 @@ def _bottom_toolbar(
         spinner = ""
     else:
         frame = render.spinner_frame(int(time.monotonic() / _FOOTER_REFRESH_S))
-        spinner = f'<style fg="cyan">{frame} working…</style> '
-    return HTML(f'{spinner}<style fg="{color}">{label}</style> <b>{hint}</b>')
+        msg = "working…"
+        spinner = f'<style fg="cyan">{frame} {msg}</style> '
+
+    # Build the status footer line
+    status_footer = f'{spinner}<style fg="{color}">{label}</style> <b>{hint}</b>'
+
+    # Convert HTML status bar to FormattedText tuples
+    status_formatted = list(to_formatted_text(HTML(status_footer)))
+
+    # Build sponsor ad line with clickable link (OSC 8 escape sequences embedded in text)
+    if sponsor_hook and sponsor_hook.is_enabled:
+        campaign_details = sponsor_hook.get_current_campaign_details()
+        if campaign_details:
+            sponsor_name, tagline, url = campaign_details
+            sponsor_parts = [
+                ("fg:white", "📢Sponsored by "),
+                ("fg:cyan bold", sponsor_name),
+                (("fg:white", " | ")),
+                (("fg:white", tagline)),
+            ]
+
+            if url:
+                sponsor_parts.append(("fg:white", " | "))
+                sponsor_parts.append(("fg:green underline", url))
+
+            # Return sponsor line + newline + status line as combined FormattedText
+            return [*sponsor_parts, ("", "\n"), *status_formatted]
+
+        # Show loading placeholder if sponsor is still loading
+        placeholder = sponsor_hook.get_placeholder_if_loading()
+        if placeholder:
+            return [("fg:gray", placeholder), ("", "\n"), *status_formatted]
+
+    # Return status footer only if no sponsor ad
+    return status_formatted
 
 
 def _build_key_bindings(
@@ -847,6 +904,7 @@ async def run_app(
     mode: str | None = None,
     repo: str | None = None,
     local: bool = False,
+    no_ads: bool = False,
 ) -> None:
     """Run the REPL until ``Ctrl-D`` or ``/quit``, routing input into the harness.
 
@@ -872,8 +930,29 @@ async def run_app(
     # (the persona rides ``deps.active_agent``, not the Agent object — ADR-0003 §7).
     agent_name = agent
 
+    # Sponsor state machine hook for B2B sponsor taglines in status line spinner
+    sponsor_hook = SponsorStateMachineHook(settings, no_ads_flag=no_ads)
+
+    # Pre-fetch sponsor campaigns asynchronously on startup (fail-silent if unavailable)
+    if sponsor_hook.is_enabled and sponsor_hook.client.is_configured:
+        try:
+            from decode.sponsors.config import get_anonymized_metadata
+
+            initial_campaigns = await sponsor_hook.client.fetch_campaigns(
+                metadata=get_anonymized_metadata()
+            )
+            if initial_campaigns:
+                sponsor_hook.rotator.update_campaigns(initial_campaigns)
+                logger.debug(f"Loaded {len(initial_campaigns)} sponsor campaigns")
+        except Exception as e:
+            logger.debug(f"Failed to prefetch sponsor campaigns: {e}")
+
     # The harness streams events into this sink (append-style; owns the once-per-turn prefix).
-    _on_event = _make_event_sink(console)
+    _sink = _make_event_sink(console)
+
+    def _on_event(event: events.Event) -> None:
+        sponsor_hook.on_event(event)
+        _sink(event)
 
     # Both resolvers await on the SAME single-flight decision channel — the one mid-turn HITL
     # surface — so a permission ask and an ask_user question can never collide.
@@ -932,9 +1011,13 @@ async def run_app(
         # the new state on its very next child event (ADR-0013 §8 amendment).
         emit_line(verbose_switch_confirmation(deps.verbose.toggle()))
 
+    # Track the current sponsor URL for click handling (using a dict for mutable closure)
+    sponsor_state = {"url": None}
+
     session: PromptSession[object] = PromptSession(
         key_bindings=_build_key_bindings(
-            on_cycle_mode=cycle_mode, on_toggle_verbose=toggle_verbose
+            on_cycle_mode=cycle_mode,
+            on_toggle_verbose=toggle_verbose,
         ),
         # Skills are a harness artifact → complete from Harness Home, not the Workspace (§6).
         completer=SlashCompleter(harness_home),
@@ -943,7 +1026,9 @@ async def run_app(
         refresh_interval=_FOOTER_REFRESH_S,
         # ``handler`` / ``runner`` are bound a few lines below; the lambda runs only during the
         # prompt loop (after they exist), so the late-bound reference is safe.
-        bottom_toolbar=lambda: _bottom_toolbar(deps, gate, handler, runner, decisions),
+        bottom_toolbar=lambda: _bottom_toolbar(
+            deps, gate, handler, runner, decisions, sponsor_hook=sponsor_hook
+        ),
     )
     # Persistence (ADR-0002 §9): replay a prior session if asked, then open a fresh append-only log.
     resumed_history = _load_resume_history(resume, console)
@@ -1019,6 +1104,18 @@ async def run_app(
     if recording_notice is not None:
         emit_line(f"Decode - {recording_notice}")
 
+    # Display initial sponsor ad if available with clickable link
+    if sponsor_hook.is_enabled:
+        result = sponsor_hook.get_and_mark_tagline_if_new()
+        if result:
+            tagline, url = result
+            sponsor_state["url"] = url
+            # Display the clickable sponsor ad via Rich (supports OSC 8 hyperlinks in modern terminals)
+            campaign_details = sponsor_hook.get_current_campaign_details()
+            if campaign_details:
+                sponsor_name, _, _ = campaign_details
+                display_sponsor_ad(sponsor_name, tagline, url)
+
     # The active model id per provider (same mapping as llm_providers._build_model's branches).
     active_model = {
         "gemini": settings.gemini_model,
@@ -1042,6 +1139,18 @@ async def run_app(
                 break
 
             intent, text = _interpret(submitted)
+
+            # Display new sponsor ad if it has rotated (checked on each prompt)
+            if sponsor_hook.is_enabled:
+                result = sponsor_hook.get_and_mark_tagline_if_new()
+                if result:
+                    tagline, url = result
+                    sponsor_state["url"] = url
+                    # Display the new clickable sponsor ad via Rich when it rotates
+                    campaign_details = sponsor_hook.get_current_campaign_details()
+                    if campaign_details:
+                        sponsor_name, _, _ = campaign_details
+                        display_sponsor_ad(sponsor_name, tagline, url)
 
             # Awaiting-decision mode: the next line answers the pending mid-turn request
             # (permission y/N or ask_user free text — the awaiting resolver does any parsing).
@@ -1113,7 +1222,10 @@ async def run_app(
                 continue
 
             logger.debug(
-                "submit intent=%s phase=%s text=%r", intent.value, runner.phase.value, text
+                "submit intent=%s phase=%s text=%r",
+                intent.value,
+                runner.phase.value,
+                text,
             )
             await runner.submit(text, intent)
 

@@ -345,6 +345,13 @@ def _runtime_config_preflight(
     is_flag=True,
     help="Use a fast local clone (git clone --local) when --repo is a local path.",
 )
+@click.option(
+    "--no-ads",
+    "no_ads",
+    is_flag=True,
+    default=False,
+    help="Disable B2B sponsor taglines in the status line spinner.",
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -353,6 +360,7 @@ def cli(
     mode: str | None,
     repo: str | None,
     local: bool,
+    no_ads: bool = False,
 ) -> None:
     """Decode — a terminal coding agent you run in your terminal.
 
@@ -425,7 +433,16 @@ def cli(
 
     # Launch the REPL: bare ``--resume`` arrives as "latest", a named one as its id, no flag as None.
     # In ``none`` mode ``resolved_repo`` is guaranteed None (guard above), so the REPL is unchanged.
-    asyncio.run(run_app(resume=resume, agent=agent, mode=mode, repo=resolved_repo, local=local))
+    asyncio.run(
+        run_app(
+            resume=resume,
+            agent=agent,
+            mode=mode,
+            repo=resolved_repo,
+            local=local,
+            no_ads=no_ads,
+        )
+    )
 
 
 @cli.command("run")
