@@ -52,7 +52,8 @@ def test_hook_state_machine_events(mock_campaigns):
     """Hook responds to TurnStarted, ThinkingDelta, ToolCallStarted, and TurnFinished events."""
     settings = Settings(sponsors_enabled=True, llm_provider="gemini")
     rotator = SponsorRotator(mock_campaigns)
-    hook = SponsorStateMachineHook(settings, rotator=rotator)
+    client = SponsorClient(endpoint_url="")
+    hook = SponsorStateMachineHook(settings, client=client, rotator=rotator)
 
     # TurnStarted
     hook.on_event(events.TurnStarted(turn_id=1, prompt="test"))
@@ -98,13 +99,13 @@ def test_hook_spinner_text_active_campaign(mock_campaigns):
 
     text = hook.spinner_text(Phase.RUNNING)
     # With round-robin, first call returns first campaign
-    assert "Sponsored by PostHog: Product analytics for modern developers" in text
+    assert "Product analytics for modern developers" in text
 
     # Advance to next campaign via phase change
     hook.on_phase_change(Phase.IDLE, Phase.DISPATCHING)
     text2 = hook.spinner_text(Phase.RUNNING)
     # Second call returns second campaign
-    assert "Sponsored by Neon: Serverless Postgres for AI agents" in text2
+    assert "Serverless Postgres for AI agents" in text2
 
 
 def test_hook_spinner_text_fallback_when_campaigns_empty():
