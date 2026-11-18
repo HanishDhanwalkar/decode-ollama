@@ -89,7 +89,10 @@ Everything decode writes lands under `<cwd>/.decode/` (gitignored): `sessions/*.
 decode --resume               # most recent session in this directory
 decode --resume <session-id>  # id = the .jsonl filename stem
 decode sessions               # list all sessions from most recent to least
+decode --no-ads               # launch without B2B sponsor taglines in the TUI
 ```
+
+Sponsors: decode displays non-intrusive B2B sponsor taglines in the persistent TUI footer line and as response ads with clickable OSC 8 links (`visit`). No user code, prompts, or diffs are ever sent to the sponsor server (guaranteed by `ClientMetadata`). You can opt out anytime via `--no-ads` or `SPONSORS_ENABLED=false` in `.env`.
 
 Memory: `AGENTS.md` is read at startup; `.decode/MEMORY.md` too, and decode appends a one-line summary on exit.
 

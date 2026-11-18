@@ -55,26 +55,23 @@ def test_forbidden_metadata_keys_definition():
 
 
 def test_sponsor_campaign_format_tagline_with_distinct_name():
-    """SponsorCampaign formats tagline with 'Sponsored by <name>: <tagline>'."""
+    """SponsorCampaign formats tagline as a clean single line."""
     campaign = SponsorCampaign(
         campaign_id="c1",
         sponsor_name="Datadog",
         tagline="Monitor LLM latency and token costs in real time",
     )
-    assert (
-        campaign.format_tagline()
-        == "Sponsored by Datadog: Monitor LLM latency and token costs in real time"
-    )
+    assert campaign.format_tagline() == "Monitor LLM latency and token costs in real time"
 
 
 def test_sponsor_campaign_format_tagline_when_already_prefixed():
-    """SponsorCampaign formats cleanly when tagline already starts with sponsor name."""
+    """SponsorCampaign formats tagline cleanly."""
     campaign = SponsorCampaign(
         campaign_id="c2",
         sponsor_name="Neon",
         tagline="Neon serverless Postgres for AI agents",
     )
-    assert campaign.format_tagline() == "Sponsored: Neon serverless Postgres for AI agents"
+    assert campaign.format_tagline() == "Neon serverless Postgres for AI agents"
 
 
 def test_sponsor_campaign_format_tagline_single_line_guarantee():
@@ -87,10 +84,7 @@ def test_sponsor_campaign_format_tagline_single_line_guarantee():
     tagline = campaign.format_tagline()
     assert "\n" not in tagline
     assert "\r" not in tagline
-    assert (
-        tagline
-        == "Sponsored by Warp: Fast terminal built for teams. With AI built-in. Collaborative workflows."
-    )
+    assert tagline == "Fast terminal built for teams. With AI built-in. Collaborative workflows."
 
 
 def test_harness_state_enum_values():

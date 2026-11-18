@@ -29,7 +29,7 @@ class SponsorRotator:
         self._last_rotation_time: float = time.monotonic()
         self.rotation_interval_s = rotation_interval_s
         self._weights: list[float] | None = None
-        self._update_weights()
+        self._weights = None
 
     def _update_weights(self) -> None:
         """Compute normalized weights for weighted random selection."""

@@ -19,7 +19,7 @@ def test_rotator_single_campaign():
     rotator = SponsorRotator([camp])
     assert rotator.has_campaigns
     assert rotator.current_campaign() == camp
-    assert rotator.current_tagline() == "Sponsored by Supabase: Build in a weekend"
+    assert rotator.current_tagline() == "Build in a weekend"
     assert rotator.advance() == camp
 
 

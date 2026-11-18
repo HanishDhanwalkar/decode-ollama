@@ -147,7 +147,7 @@ def display_sponsor_ad(sponsor_name: str, tagline: str, url: str | None) -> None
     """
 
     # Build the clickable ad with Rich's link support
-    ad_text = Text("📢Sponsored by ", style="white")
+    ad_text = Text("📢 Sponsored by ", style="white")
     ad_text.append(sponsor_name, style="cyan bold")
     ad_text.append(" | ", style="dim")
     ad_text.append(tagline, style="white")
@@ -729,7 +729,7 @@ def _bottom_toolbar(
         if campaign_details:
             sponsor_name, tagline, url = campaign_details
             sponsor_parts = [
-                ("fg:white", "📢Sponsored by "),
+                ("fg:white", "📢 Sponsored by "),
                 ("fg:cyan bold", sponsor_name),
                 (("fg:white", " | ")),
                 (("fg:white", tagline)),

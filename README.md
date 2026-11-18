@@ -101,10 +101,23 @@ One Python package; each module maps to one part of the architecture:
     ├── context/              # compaction + conversation log (JSONL)
     ├── memory/               # AGENTS.md / MEMORY.md loading + write-back
     ├── observability/        # Langfuse tracing + evaluation scores
+    ├── sponsors/             # B2B sponsorship engine: TUI footer + response stream ads (ADR-0026)
     └── config/, entities/    # settings singleton · shared models
 ```
 
-## 🚀 Running the Code
+## B2B Sponsorship & Monetization (ADR-0026)
+
+`decode-ollama` is free and open-source, funded sustainably by developer-focused B2B sponsorships without paywalling features or requiring cloud inference markups:
+
+- **Terminal-Native Placements:**
+  - **Persistent TUI Footer Banner:** A dedicated formatted line displayed directly above the status toolbar in the interactive REPL:
+    `📢 Sponsored by Modal | Serverless GPU compute for AI/ML | visit`
+  - **Response / Stream Ads:** On startup and between turns as campaigns rotate, non-disruptive ads are rendered into the output stream using Rich with clickable OSC 8 green-underlined hyperlinks (`visit`).
+  - **Decoupled Reasoning Spinner:** The reasoning/execution spinner stays clean and focused solely on progress (`working…`), free of rotating text or animation jitter.
+- **Zero Code Leakage Guarantee:** Privacy is built-in at the schema level (`ClientMetadata`). Only high-level platform attributes (`client_version`, `os_type`, `python_version`) are transmitted. User code, prompts, git diffs, paths, environment variables, and API keys are strictly blacklisted.
+- **Opt-Out:** Disable anytime via `decode --no-ads`, `.decode/settings.json` (`"ads": false`), or `SPONSORS_ENABLED=false` in `.env`.
+
+## Running the Code
 
 The guides live under [`running_the_code/`](running_the_code/). Follow them in order; each ends with a link to the next:
 
